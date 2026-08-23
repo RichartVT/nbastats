@@ -11,6 +11,7 @@
 DROP MATERIALIZED VIEW IF EXISTS mv_league_season_baselines CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS mv_player_season CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS mv_player_game_rates CASCADE;
+DROP MATERIALIZED VIEW IF EXISTS mv_team_game_rates CASCADE;
 
 
 -- =========================================================================
@@ -203,3 +204,75 @@ WHERE games_played >= 20
 GROUP BY season_id, season_type;
 
 CREATE UNIQUE INDEX ux_mvlsb_pk ON mv_league_season_baselines (season_id, season_type);
+
+
+-- =========================================================================
+-- 4. mv_team_game_rates — la vista de trabajo de EQUIPOS
+--
+-- Espejo de mv_player_game_rates. Es lo que permite que `analysis/trends.py` y
+-- `analysis/reliability.py` sirvan igual para equipos que para jugadores sin
+-- tocar una línea: esos módulos reciben listas de números y no saben —ni les
+-- importa— de dónde vienen.
+--
+-- La normalización aquí es per-100 POSESIONES, no per-36 minutos. Un equipo
+-- siempre juega 48 minutos, así que los minutos no distinguen nada; lo que
+-- varía es cuántas posesiones caben en esos 48 minutos, y eso es el ritmo.
+-- Comparar puntos por partido entre 2018-19 y 2025-26 mezcla "anota mejor" con
+-- "juega más rápido".
+-- =========================================================================
+CREATE MATERIALIZED VIEW mv_team_game_rates AS
+SELECT
+    tgs.game_id,
+    tgs.team_id,
+    g.season_id,
+    g.season_type,
+    g.game_date_local,
+
+    -- Mismas dimensiones de split que la vista de jugadores.
+    EXTRACT(ISODOW FROM g.game_date_local)::smallint AS day_of_week,
+    EXTRACT(MONTH FROM g.game_date_local)::smallint  AS month,
+    tgs.is_home,
+    tgs.opponent_team_id,
+    tgs.rest_days,
+    tgs.is_back_to_back,
+    tgs.won,
+    g.is_neutral_site,
+    g.game_label,
+    g.game_sublabel,
+    g.tipoff_utc,
+
+    -- Totales del partido
+    tgs.pts, tgs.reb, tgs.oreb, tgs.dreb, tgs.ast, tgs.stl, tgs.blk,
+    tgs.tov, tgs.pf, tgs.fgm, tgs.fga, tgs.fg3m, tgs.fg3a, tgs.ftm, tgs.fta,
+    tgs.plus_minus,
+
+    -- Marcador del rival, para diferencial y análisis defensivo.
+    opp.pts AS opp_pts,
+    (tgs.pts - opp.pts)::smallint AS point_diff,
+
+    -- Tasas per-100 posesiones. NULLIF evita dividir por cero en los partidos
+    -- antiguos que no traen el dato de posesiones.
+    (tgs.pts  * 100.0 / NULLIF(tgs.possessions, 0))::numeric(7,3) AS pts_per_100,
+    (tgs.reb  * 100.0 / NULLIF(tgs.possessions, 0))::numeric(7,3) AS reb_per_100,
+    (tgs.ast  * 100.0 / NULLIF(tgs.possessions, 0))::numeric(7,3) AS ast_per_100,
+    (tgs.stl  * 100.0 / NULLIF(tgs.possessions, 0))::numeric(7,3) AS stl_per_100,
+    (tgs.blk  * 100.0 / NULLIF(tgs.possessions, 0))::numeric(7,3) AS blk_per_100,
+    (tgs.tov  * 100.0 / NULLIF(tgs.possessions, 0))::numeric(7,3) AS tov_per_100,
+    (tgs.fg3a * 100.0 / NULLIF(tgs.possessions, 0))::numeric(7,3) AS fg3a_per_100,
+
+    -- Avanzadas de equipo, tal cual las da la fuente.
+    tgs.possessions, tgs.pace,
+    tgs.off_rating, tgs.def_rating, tgs.net_rating,
+    tgs.ts_pct, tgs.efg_pct
+
+FROM team_game_stats tgs
+JOIN games g ON g.game_id = tgs.game_id
+-- Auto-join para traer el marcador del rival en el mismo partido.
+JOIN team_game_stats opp
+     ON opp.game_id = tgs.game_id AND opp.team_id = tgs.opponent_team_id
+WHERE g.season_type <> 'preseason';
+
+CREATE UNIQUE INDEX ux_mvtgr_pk    ON mv_team_game_rates (game_id, team_id);
+CREATE INDEX ix_mvtgr_team_date    ON mv_team_game_rates (team_id, game_date_local);
+CREATE INDEX ix_mvtgr_season       ON mv_team_game_rates (season_id, season_type);
+CREATE INDEX ix_mvtgr_matchup      ON mv_team_game_rates (team_id, opponent_team_id);

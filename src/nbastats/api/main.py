@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from nbastats.analysis.game_types import describe_game
 from nbastats.analysis.reliability import analyze_splits, benjamini_hochberg
 from nbastats.analysis.trends import (
     MIN_GAMES_FOR_TREND,
@@ -25,12 +26,17 @@ from nbastats.analysis.trends import (
 )
 from nbastats.api import queries as q
 from nbastats.api.catalog import DIMENSIONS, STATS, Dimension, Stat
+from nbastats.api.routers import teams as teams_router
 from nbastats.api.schemas import (
     GameLogEntryOut,
+    GameTypeOut,
     LeaderOut,
     LeadersResponse,
     PlayerOut,
+    PlayerRanksOut,
     PlayerSeasonOut,
+    RankedStat,
+    RecentGameOut,
     SplitOut,
     SplitsResponse,
     TrendOut,
@@ -55,6 +61,8 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+app.include_router(teams_router.router)
 
 SeasonsQuery = Query(None, description="Filtra por temporadas, ej. 2024-25")
 
@@ -213,6 +221,79 @@ def get_splits(
         splits=salida,
         caveat=aviso,
         any_distinguishable=any(s.distinguishable for s in salida),
+    )
+
+
+@app.get(
+    "/players/{player_id}/recent",
+    response_model=list[RecentGameOut],
+    tags=["jugadores"],
+)
+def get_recent(
+    player_id: int,
+    limit: int = Query(5, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> list[RecentGameOut]:
+    """Los últimos partidos oficiales, con el tipo de cada uno.
+
+    Incluye playoffs, play-in y NBA Cup: "sus últimos partidos" son los últimos
+    que jugó. Filtrar a temporada regular escondería una eliminatoria entera.
+    """
+    salida = []
+    for f in q.get_recent_games(db, player_id, limit):
+        t = describe_game(f["season_type"], f.get("game_label"), f.get("game_sublabel"))
+        salida.append(
+            RecentGameOut(
+                game_type=GameTypeOut(
+                    key=t.key, label=t.label, is_postseason=t.is_postseason
+                ),
+                **{
+                    k: v for k, v in f.items()
+                    if k in RecentGameOut.model_fields and k != "game_type"
+                },
+            )
+        )
+    return salida
+
+
+@app.get(
+    "/players/{player_id}/ranks",
+    response_model=PlayerRanksOut | None,
+    tags=["jugadores"],
+)
+def get_ranks(
+    player_id: int,
+    season: str = Query(..., description="Temporada, ej. 2024-25"),
+    db: Session = Depends(get_db),
+) -> PlayerRanksOut | None:
+    """Puesto del jugador en la liga, por estadística.
+
+    Devuelve `null` si no llega al mínimo de partidos y minutos para entrar en
+    el ranking. Eso es información, no un error: significa que compararlo con
+    los titulares de la liga no tendría sentido.
+    """
+    fila = q.get_league_ranks(db, player_id, season)
+    if not fila:
+        return None
+
+    def rk(valor_key: str, rank_key: str) -> RankedStat:
+        v = fila.get(valor_key)
+        return RankedStat(
+            value=round(float(v), 4) if v is not None else None,
+            rank=fila.get(rank_key),
+        )
+
+    return PlayerRanksOut(
+        season_id=season,
+        qualified_players=fila["qualified"],
+        games_played=fila["gp"],
+        pts=rk("ppg", "ppg_rank"),
+        reb=rk("rpg", "rpg_rank"),
+        ast=rk("apg", "apg_rank"),
+        stl=rk("spg", "spg_rank"),
+        blk=rk("bpg", "bpg_rank"),
+        fg_pct=rk("fg_pct", "fg_pct_rank"),
+        ts_pct=rk("ts_pct", "ts_pct_rank"),
     )
 
 

@@ -248,7 +248,36 @@ def ingest_standings(
             )
         logger.info("Clasificación %s: %d equipos", season, len(filas))
 
+    _backfill_conference()
     return total
+
+
+def _backfill_conference() -> None:
+    """Copia conferencia y división de la clasificación a `teams`.
+
+    `TeamDetails` no devuelve ninguna de las dos, y el paquete estático tampoco.
+    La clasificación sí, así que se propagan desde ahí: son propiedades del
+    equipo, no de una temporada, y tenerlas en `teams` ahorra un join en cada
+    consulta que agrupe por conferencia.
+
+    Se toma la temporada más reciente porque las conferencias no cambian, pero
+    los equipos sí cambian de división de vez en cuando.
+    """
+    from sqlalchemy import text as sql_text
+
+    from nbastats.db.session import get_engine
+
+    with get_engine().begin() as conn:
+        resultado = conn.execute(sql_text("""
+            UPDATE teams t
+            SET conference = s.conference,
+                division   = s.division
+            FROM team_standings s
+            WHERE s.team_id = t.team_id
+              AND s.season_id = (SELECT MAX(season_id) FROM team_standings)
+              AND s.conference IS NOT NULL
+        """))
+    logger.info("Conferencia y división propagadas a %d equipos", resultado.rowcount)
 
 
 def ingest_all_team_data(seasons: list[str]) -> dict[str, int]:

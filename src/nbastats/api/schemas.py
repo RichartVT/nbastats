@@ -34,6 +34,17 @@ class PlayerOut(BaseModel):
     seasons: list[str] = Field(default_factory=list)
     teams: list[str] = Field(default_factory=list)
 
+    # --- Ficha ---
+    jersey_number: str | None = None
+    roster_status: str | None = Field(None, description="Active / Inactive")
+    season_experience: int | None = None
+    current_team_id: int | None = None
+    current_team_abbr: str | None = None
+    current_team_name: str | None = None
+    draft_round: int | None = None
+    draft_number: int | None = None
+    school: str | None = None
+
 
 class PlayerSeasonOut(BaseModel):
     season_id: str
@@ -228,3 +239,194 @@ class LeadersResponse(BaseModel):
     players_significant: int
     caveat: str
     leaders: list[LeaderOut]
+
+
+# =========================================================================
+# Tipo de partido y últimos partidos
+# =========================================================================
+
+
+class GameTypeOut(BaseModel):
+    key: str = Field(description="Identificador estable: regular, cup, playoffs…")
+    label: str = Field(description="Texto para la insignia: 'NBA Cup · Grupo'")
+    is_postseason: bool
+
+
+class RecentGameOut(BaseModel):
+    game_id: str
+    date: dt.date
+    season_id: str
+    game_type: GameTypeOut
+    team: str
+    opponent: str
+    opponent_id: int
+    is_home: bool
+    is_neutral_site: bool
+    won: bool | None = None
+    team_pts: int | None = None
+    opp_pts: int | None = None
+    minutes: str
+    pts: int | None = None
+    reb: int | None = None
+    ast: int | None = None
+    stl: int | None = None
+    blk: int | None = None
+    tov: int | None = None
+    fgm: int | None = None
+    fga: int | None = None
+    fg3m: int | None = None
+    fg3a: int | None = None
+    ftm: int | None = None
+    fta: int | None = None
+    plus_minus: int | None = None
+    ts_pct: float | None = None
+    game_score: float | None = None
+
+
+class RankedStat(BaseModel):
+    value: float | None = None
+    rank: int | None = Field(None, description="Puesto en la liga, 1 es el mejor")
+
+
+class PlayerRanksOut(BaseModel):
+    season_id: str
+    qualified_players: int = Field(
+        description="Cuántos jugadores cumplen el mínimo. El puesto se lee contra esto."
+    )
+    games_played: int
+    pts: RankedStat
+    reb: RankedStat
+    ast: RankedStat
+    stl: RankedStat
+    blk: RankedStat
+    fg_pct: RankedStat
+    ts_pct: RankedStat
+
+
+# =========================================================================
+# Equipos
+# =========================================================================
+
+
+class TeamSummaryOut(BaseModel):
+    team_id: int
+    abbreviation: str
+    full_name: str
+    city: str | None = None
+    nickname: str | None = None
+    conference: str | None = None
+    division: str | None = None
+    arena: str | None = None
+    wins: int | None = None
+    losses: int | None = None
+    win_pct: float | None = None
+    playoff_rank: int | None = None
+    diff_points_pg: float | None = None
+
+
+class RosterEntryOut(BaseModel):
+    player_id: int
+    full_name: str
+    jersey_number: str | None = None
+    position: str | None = None
+    age: float | None = None
+    height_cm: int | None = None
+    weight_kg: int | None = None
+    roster_status: str | None = None
+    season_experience: int | None = None
+    how_acquired: str | None = None
+    games: int = 0
+    min_per_game: float | None = None
+    pts_per_game: float | None = None
+    reb_per_game: float | None = None
+    ast_per_game: float | None = None
+
+
+class TeamOut(BaseModel):
+    team_id: int
+    abbreviation: str
+    full_name: str
+    city: str | None = None
+    nickname: str | None = None
+    conference: str | None = None
+    division: str | None = None
+    arena: str | None = None
+    arena_capacity: int | None = None
+    owner: str | None = None
+    general_manager: str | None = None
+    head_coach: str | None = None
+    year_founded: int | None = None
+
+    season_id: str | None = None
+    wins: int | None = None
+    losses: int | None = None
+    win_pct: float | None = None
+    playoff_rank: int | None = None
+    conference_record: str | None = None
+    division_record: str | None = None
+    home_record: str | None = None
+    road_record: str | None = None
+    last_10: str | None = None
+    current_streak: int | None = None
+    points_pg: float | None = None
+    opp_points_pg: float | None = None
+    diff_points_pg: float | None = None
+
+    roster: list[RosterEntryOut] = Field(default_factory=list)
+
+
+class TeamGameOut(BaseModel):
+    game_id: str
+    date: dt.date
+    season_id: str
+    game_type: GameTypeOut
+    opponent: str
+    opponent_id: int
+    is_home: bool
+    is_neutral_site: bool
+    won: bool | None = None
+    pts: int | None = None
+    opp_pts: int | None = None
+    point_diff: int | None = None
+    reb: int | None = None
+    ast: int | None = None
+    tov: int | None = None
+    off_rating: float | None = None
+    def_rating: float | None = None
+    pace: float | None = None
+    ts_pct: float | None = None
+
+
+class StandingOut(BaseModel):
+    team_id: int
+    abbreviation: str
+    full_name: str
+    conference: str | None = None
+    division: str | None = None
+    playoff_rank: int | None = None
+    wins: int | None = None
+    losses: int | None = None
+    win_pct: float | None = None
+    games_back: float | None = None
+    conference_record: str | None = None
+    division_record: str | None = None
+    home_record: str | None = None
+    road_record: str | None = None
+    last_10: str | None = None
+    current_streak: int | None = None
+    points_pg: float | None = None
+    opp_points_pg: float | None = None
+    diff_points_pg: float | None = None
+
+
+class HeadToHeadOut(BaseModel):
+    team_a: TeamSummaryOut
+    team_b: TeamSummaryOut
+    seasons: list[str]
+    games_played: int
+    team_a_wins: int
+    team_b_wins: int
+    avg_point_diff: float | None = Field(
+        None, description="Diferencial medio desde la perspectiva del primer equipo"
+    )
+    games: list[TeamGameOut] = Field(default_factory=list)

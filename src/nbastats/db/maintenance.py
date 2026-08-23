@@ -28,6 +28,7 @@ MATERIALIZED_VIEWS = (
     "mv_player_game_rates",
     "mv_player_season",
     "mv_league_season_baselines",
+    "mv_team_game_rates",
 )
 
 

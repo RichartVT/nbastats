@@ -56,13 +56,16 @@ def search_players(session: Session, query: str, limit: int = 25) -> list[dict]:
 def get_player(session: Session, player_id: int) -> dict | None:
     sql = text("""
         SELECT p.*,
+               ct.abbreviation AS current_team_abbr,
+               ct.full_name    AS current_team_name,
                ARRAY_AGG(DISTINCT r.season_id ORDER BY r.season_id) AS seasons,
                ARRAY_AGG(DISTINCT t.abbreviation)                   AS teams
         FROM players p
+        LEFT JOIN teams ct ON ct.team_id = p.current_team_id
         LEFT JOIN mv_player_game_rates r USING (player_id)
         LEFT JOIN teams t ON t.team_id = r.team_id
         WHERE p.player_id = :pid
-        GROUP BY p.player_id
+        GROUP BY p.player_id, ct.abbreviation, ct.full_name
     """)
     fila = session.execute(sql, {"pid": player_id}).mappings().first()
     if not fila:
@@ -105,7 +108,7 @@ def get_gamelog(
                r.season_type::text AS season_type,
                tm.abbreviation AS team, opp.abbreviation AS opponent,
                r.is_home, r.is_neutral_site, r.won, r.rest_days, r.is_back_to_back,
-               g.tipoff_utc, r.seconds_played,
+               g.tipoff_utc, g.game_label, g.game_sublabel, r.seconds_played,
                r.pts, r.reb, r.ast, r.stl, r.blk, r.tov, r.plus_minus,
                r.ts_pct, r.usg_pct, r.game_score
         FROM mv_player_game_rates r
@@ -293,3 +296,108 @@ def get_all_player_series(
         series[f.player_id][1].append(float(f.valor))
 
     return {pid: v for pid, v in series.items() if len(v[1]) >= min_games}
+
+
+def get_recent_games(session: Session, player_id: int, limit: int = 5) -> list[dict]:
+    """Los últimos partidos oficiales, de cualquier tipo.
+
+    Incluye playoffs y play-in a propósito, no solo temporada regular: "sus
+    últimos partidos" significa los últimos que jugó, y filtrar a regular
+    escondería una eliminatoria entera.
+    """
+    sql = text("""
+        SELECT r.game_id, r.game_date_local AS date, r.season_id,
+               r.season_type::text AS season_type,
+               g.game_label, g.game_sublabel,
+               opp.team_id AS opponent_id, opp.abbreviation AS opponent,
+               tm.abbreviation AS team,
+               r.is_home, r.is_neutral_site, r.won,
+               tgs.pts AS team_pts, tgs_opp.pts AS opp_pts,
+               r.seconds_played, r.pts, r.reb, r.ast, r.stl, r.blk, r.tov,
+               r.fgm, r.fga, r.fg3m, r.fg3a, r.ftm, r.fta,
+               r.plus_minus, r.ts_pct, r.game_score
+        FROM mv_player_game_rates r
+        JOIN games g   ON g.game_id  = r.game_id
+        JOIN teams tm  ON tm.team_id = r.team_id
+        JOIN teams opp ON opp.team_id = r.opponent_team_id
+        JOIN team_game_stats tgs
+             ON tgs.game_id = r.game_id AND tgs.team_id = r.team_id
+        JOIN team_game_stats tgs_opp
+             ON tgs_opp.game_id = r.game_id AND tgs_opp.team_id = r.opponent_team_id
+        WHERE r.player_id = :pid
+        ORDER BY r.game_date_local DESC, r.game_id DESC
+        LIMIT :limit
+    """)
+    filas = session.execute(sql, {"pid": player_id, "limit": limit}).mappings()
+
+    salida = []
+    for f in filas:
+        d = dict(f)
+        d["minutes"] = format_seconds(d.pop("seconds_played") or 0)
+        salida.append(d)
+    return salida
+
+
+# Mínimos para entrar en el ranking de liga. Mismo criterio que usa
+# `mv_league_season_baselines`: sin él, un jugador con dos partidos y 30 puntos
+# de media encabezaría la lista de anotadores.
+RANK_MIN_GAMES = 20
+RANK_MIN_SECONDS_PER_GAME = 900  # 15 minutos
+
+
+def get_league_ranks(session: Session, player_id: int, season: str) -> dict | None:
+    """Puesto del jugador en la liga, por estadística.
+
+    Es el «1º, 22º, 3º» que ESPN pone junto a los promedios. Se calcula con
+    funciones de ventana sobre `mv_player_season`, filtrando a jugadores
+    cualificados.
+
+    Un jugador traspasado tiene varias filas en esa vista (una por equipo), así
+    que primero se recombinan sus totales: si no, cada mitad de su temporada
+    competiría por separado y ninguna llegaría al mínimo de partidos.
+    """
+    sql = text("""
+        WITH combinados AS (
+            SELECT player_id,
+                   SUM(games_played)   AS gp,
+                   SUM(seconds_played) AS secs,
+                   SUM(pts)::numeric / NULLIF(SUM(games_played), 0) AS ppg,
+                   SUM(reb)::numeric / NULLIF(SUM(games_played), 0) AS rpg,
+                   SUM(ast)::numeric / NULLIF(SUM(games_played), 0) AS apg,
+                   SUM(stl)::numeric / NULLIF(SUM(games_played), 0) AS spg,
+                   SUM(blk)::numeric / NULLIF(SUM(games_played), 0) AS bpg,
+                   SUM(fgm)::numeric / NULLIF(SUM(fga), 0)          AS fg_pct,
+                   SUM(pts) / NULLIF(2 * (SUM(fga) + 0.44 * SUM(fta)), 0) AS ts_pct
+            FROM mv_player_season
+            WHERE season_id = :season AND season_type = 'regular'
+            GROUP BY player_id
+        ),
+        cualificados AS (
+            SELECT * FROM combinados
+            WHERE gp >= :min_games
+              AND secs::numeric / NULLIF(gp, 0) >= :min_secs
+        ),
+        puestos AS (
+            SELECT player_id, gp,
+                   ppg, RANK() OVER (ORDER BY ppg DESC NULLS LAST) AS ppg_rank,
+                   rpg, RANK() OVER (ORDER BY rpg DESC NULLS LAST) AS rpg_rank,
+                   apg, RANK() OVER (ORDER BY apg DESC NULLS LAST) AS apg_rank,
+                   spg, RANK() OVER (ORDER BY spg DESC NULLS LAST) AS spg_rank,
+                   bpg, RANK() OVER (ORDER BY bpg DESC NULLS LAST) AS bpg_rank,
+                   fg_pct, RANK() OVER (ORDER BY fg_pct DESC NULLS LAST) AS fg_pct_rank,
+                   ts_pct, RANK() OVER (ORDER BY ts_pct DESC NULLS LAST) AS ts_pct_rank,
+                   COUNT(*) OVER () AS qualified
+            FROM cualificados
+        )
+        SELECT * FROM puestos WHERE player_id = :pid
+    """)
+    fila = session.execute(
+        sql,
+        {
+            "pid": player_id,
+            "season": season,
+            "min_games": RANK_MIN_GAMES,
+            "min_secs": RANK_MIN_SECONDS_PER_GAME,
+        },
+    ).mappings().first()
+    return dict(fila) if fila else None
