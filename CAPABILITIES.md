@@ -54,6 +54,26 @@ normalizados contra la liga de esa misma temporada.
 **Comparaciones entre jugadores**
 en cualquiera de las métricas anteriores, normalizadas por ritmo y por año.
 
+**Fichas de jugador y equipo**
+dorsal, estatus, experiencia, equipo actual, draft, procedencia; foto y logo
+enlazados al CDN de la NBA. Por equipo: estadio, capacidad, entrenador,
+director general, plantilla de cada temporada y calendario completo.
+
+**Tipo de cada partido**
+temporada regular, NBA Cup (con su ronda), play-in, playoffs (con ronda y
+número de partido) y partidos internacionales. Se deriva de tres campos, no de
+una columna: **un partido de la NBA Cup es un partido de temporada regular** —
+son 66 de los 1.230 de cada año, y solo la final queda fuera del cómputo.
+
+**Análisis de equipo**
+las mismas tendencias y splits que los jugadores, normalizados per-100
+posesiones en vez de per-36 minutos: un equipo siempre juega 48 minutos, así
+que lo que distingue no son los minutos sino cuántas posesiones caben dentro.
+
+**Clasificación y enfrentamientos directos**
+posiciones oficiales con los desempates de la NBA ya aplicados, récords
+desglosados y historial entre dos equipos cualesquiera.
+
 ---
 
 ## 2. Límite A — estructural: lo que NO se puede preguntar
@@ -73,6 +93,7 @@ están cargados.
 | "¿Cómo le fue tras un tiempo muerto?" | Play-by-play. |
 | "¿Rinde mejor como titular que saliendo del banquillo?" | `PlayerGameLogs` no marca quién fue titular. Requeriría una petición por partido (~6.600) en vez de una por temporada. |
 | "¿Cuántos partidos se perdió por lesión?" | Solo aparecen los jugadores que jugaron: no hay filas de DNP ni motivo. Misma fuente y mismo coste que la anterior. |
+| "¿Qué puesto ocupa en FG% de la liga?" | Se responde, pero con un umbral distinto al oficial: la NBA cualifica los porcentajes por mínimo de intentos (300 tiros anotados) y aquí se usa el de partidos. Los puestos de puntos, rebotes y asistencias sí coinciden exactamente con las fuentes públicas. |
 
 Y un caso aparte, que no es de falta de datos sino de falta de señal:
 

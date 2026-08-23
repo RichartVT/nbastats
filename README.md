@@ -38,7 +38,8 @@ docker exec -it nbastats-db psql -U nbastats -d nbastats
 ```bash
 uv run nbastats ingest-seasons   # box scores, 5 temporadas (~3 min)
 uv run nbastats enrich           # hora de inicio y sedes neutrales (~10 min)
-uv run nbastats ingest-bios      # fechas de nacimiento (~12 min)
+uv run nbastats ingest-bios      # ficha de jugador: nacimiento, dorsal… (~12 min)
+uv run nbastats ingest-teams     # fichas, plantillas y clasificación (~3 min)
 uv run nbastats refresh          # columnas derivadas y vistas
 uv run nbastats status           # ver qué hay cargado
 ```
@@ -70,6 +71,7 @@ src/nbastats/
 │   └── migrations/     Alembic
 ├── ingest/
 │   ├── nba_client.py   Cliente con control de ritmo y reintentos
+│   ├── teams.py        Fichas de equipo, plantillas y clasificación
 │   ├── bulk.py         Carga de temporadas completas
 │   ├── enrich.py       Hora de inicio y sedes neutrales
 │   ├── bio.py          Biografías de jugadores
@@ -77,6 +79,7 @@ src/nbastats/
 ├── analysis/
 │   ├── rates.py        per-36, per-100, TS%, eFG%, USG%, Game Score
 │   ├── trends.py       Declive/alza: Mann-Kendall, puntos de cambio, edad
+│   ├── game_types.py   Tipo de partido: NBA Cup, playoffs, internacionales
 │   └── reliability.py  Splits con intervalo, encogimiento y control de FDR
 └── api/
     ├── catalog.py      Estadísticas y dimensiones consultables
@@ -87,7 +90,7 @@ src/nbastats/
 web/                    React + Vite + TypeScript + Recharts
 ├── src/api/            Cliente y tipos espejo de los esquemas Pydantic
 ├── src/components/     Gráficos e insignias de confiabilidad
-└── src/pages/          Buscador, ficha de jugador, rankings
+└── src/pages/          Jugadores, equipos, clasificación, rankings
 ```
 
 ## Datos
