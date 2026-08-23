@@ -26,6 +26,8 @@ Documentos hermanos:
 | 4 | Vistas materializadas + capa de análisis | ✅ Completa — validada contra la NBA |
 | 5 | API FastAPI | ✅ Completa — 9 endpoints |
 | 6 | Frontend React | ✅ Completa — 3 vistas, 2 gráficos, modo claro y oscuro |
+| 7 | Perfiles de jugador y equipo, datos de plantilla y clasificación | ✅ Completa |
+| 8 | Análisis de equipo y comparador de jugadores | ✅ Completa |
 
 **Números:** 6.602 partidos · 140.932 filas jugador-partido · 1.030 jugadores
 con biografía completa · 5 temporadas (2021-22 → 2025-26) · 145 tests ·
@@ -470,6 +472,80 @@ Es preferible una función marcada como no fiable que un endpoint que devuelva
 
 ---
 
+### 2026-08-23 · Fases 7 y 8 — Perfiles, equipos y comparador
+
+Reequilibrio pedido por el usuario: la aplicación giraba en torno a los splits
+condicionales, que son una función más y no el esqueleto. Ahora la ficha de
+jugador ordena identidad → rendimiento reciente → trayectoria → splits.
+
+**Datos nuevos, casi gratis.** Dorsal, estatus, experiencia, equipo actual y
+draft ya venían en la respuesta de `CommonPlayerInfo` que la ingesta descargaba
+y tiraba: cero peticiones extra. Fichas de equipo (30), plantillas de las 5
+temporadas (2.605 filas) y clasificación (150). Las fotos y logos se enlazan al
+CDN y se derivan del id, sin guardar URLs: coste en disco cero.
+
+**La clasificación resultó trivial**, al contrario de lo que advertí en el plan.
+`LeagueStandingsV3` devuelve `PlayoffRank` con los desempates oficiales ya
+aplicados. Cinco llamadas.
+
+#### Cuatro correcciones que solo aparecieron al comparar con la realidad
+
+1. **Los puestos de liga usaban un umbral inventado** (20 partidos, 15 minutos)
+   y no cuadraban con ninguna fuente: Dončić salía 30º en rebotes cuando todas
+   publican 22º. Sustituido por la regla oficial de la NBA —58 partidos, el 70%
+   de la temporada—. Ahora coincide exacto en puntos, rebotes y asistencias.
+   Los porcentajes siguen difiriendo porque la NBA los cualifica por mínimo de
+   intentos, no de partidos; documentado en código y visible en la interfaz.
+
+2. **Se estaba tirando la ronda de playoffs.** La fuente distingue
+   "NBA Finals" de "West First Round" y trae el número de partido en el
+   sublabel. Ahora muestra "Final de conferencia Oeste · G7". Al revisar las 55
+   combinaciones reales aparecieron tres trampas: el formato cambia entre
+   temporadas ("East - Conf. Finals" → "East Conf. Finals"), las etiquetas
+   llevan patrocinador que cambia cada año, y "Conf. Semifinals" contiene
+   "Finals" — el mismo error de subcadena que ya mordió con "Quarterfinal".
+
+3. **Las líneas del comparador se mantenían planas durante meses.** Era el
+   verano: `connectNulls` tendía un puente recto entre el último partido de
+   junio y el primero de noviembre. Ahora cada jugador lleva su propia serie y
+   la línea se parte en los parones de más de 40 días.
+
+4. **Los bigotes del intervalo no se dibujaban.** Estaban en el DOM con
+   `transform: scaleX(0)`: Recharts los anima desde cero durante 400 ms.
+   Desactivada — en un gráfico estático esa animación no aporta nada y se lee
+   como si el intervalo estuviera cambiando.
+
+#### Un problema de diseño que destapó el propio análisis
+
+La pantalla de equipo analizaba una sola temporada. Con 41 partidos en casa,
+**ni siquiera la ventaja de campo alcanza significación**:
+
+```
+OKC, rating neto local/visitante
+  solo 2025-26 (n≈41):     11,50 vs 10,79   q=0,84    -> ruido
+  las 5 temporadas (n≈205): 7,52 vs  1,90   q=0,0007  -> REAL
+
+contraste de cordura, 30 equipos × 5 temporadas:
+  +1,93 en casa contra −1,93 fuera  (la ventaja de campo documentada)
+```
+
+Es la mejor validación que ha tenido la capa estadística: el sistema no
+responde "sin patrón" por defecto — se niega a afirmarlo sin potencia y lo
+detecta cuando la hay, con la magnitud correcta. El análisis pasa a tener su
+propio alcance, separado del de la plantilla y el calendario, con las 5
+temporadas por defecto.
+
+#### Una tensión de diseño que no tiene solución limpia
+
+La guía de visualización exige etiquetas directas a partir de cuatro series,
+pero también prohíbe que las etiquetas se solapen — y cuatro jugadores con
+rendimientos parecidos terminan la línea casi a la misma altura. Se resolvió
+ordenando la leyenda por el valor final: cumple el objetivo (que la identidad
+no dependa solo del color) sin provocar la colisión que el mismo documento
+avisa de evitar. Queda anotado como desviación deliberada.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -483,9 +559,10 @@ Candidatos para lo siguiente, por valor:
 
 1. **Método delta para las curvas de edad** — desbloquea la pregunta más
    valiosa del proyecto: distinguir "está en declive" de "tiene 34 años y le
-   pasa lo que a todos".
-2. **Comparador de jugadores** — la quinta vista del plan, la única que falta.
-3. **Box scores por partido** (~6.600 peticiones, ~1,3 h) — añade `started` y
+   pasa lo que a todos". Sigue siendo lo primero de la lista.
+2. **Box scores por partido** (~6.600 peticiones, ~1,3 h) — añade `started` y
    `dnp_reason`, y con ellos el split titular/banquillo.
-4. **Play-by-play** — elimina casi todo el bloque A de `CAPABILITIES.md`:
+3. **Play-by-play** — elimina casi todo el bloque A de `CAPABILITIES.md`:
    clutch, quintetos, rendimiento por cuarto.
+4. **Comparador de equipos** — el head-to-head ya existe en la API
+   (`/teams/{a}/vs/{b}`) pero todavía no tiene pantalla.
