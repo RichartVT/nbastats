@@ -4,6 +4,8 @@ import { useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { TrendDirection } from '../api/types'
 import { Card, ErrorBox, Loading, Select } from '../components/Layout'
+import { PlayerHeader, SeasonTiles } from '../components/PlayerHeader'
+import { RecentGames } from '../components/RecentGames'
 import { NoiseWarning, ReliabilityBadge } from '../components/Reliability'
 import { SplitsChart, SplitsTable } from '../components/SplitsChart'
 import { TrendChart } from '../components/TrendChart'
@@ -16,12 +18,21 @@ const DIRECCION: Record<TrendDirection, { texto: string; color: string; icono: s
   indeterminada: { texto: 'Sin datos suficientes', color: 'var(--text-muted)', icono: '·' },
 }
 
+/**
+ * Ficha de jugador.
+ *
+ * El orden de las secciones importa y no es casual: identidad, rendimiento
+ * reciente, trayectoria y — solo al final — splits condicionales. Los splits
+ * son una función más, no el esqueleto de la aplicación: la mayoría de las
+ * veces su respuesta honesta es "aquí no hay patrón", y esa no es la primera
+ * información que alguien quiere de un jugador.
+ */
 export function PlayerPage() {
   const { id } = useParams()
   const playerId = Number(id)
 
   const [stat, setStat] = useState('pts_per_36')
-  const [dimension, setDimension] = useState('dow')
+  const [dimension, setDimension] = useState('home_away')
   const [verTabla, setVerTabla] = useState(false)
 
   const catalogo = useQuery({ queryKey: ['catalog'], queryFn: api.catalog })
@@ -33,6 +44,20 @@ export function PlayerPage() {
     queryKey: ['seasons', playerId],
     queryFn: () => api.seasons(playerId),
   })
+  const recientes = useQuery({
+    queryKey: ['recent', playerId],
+    queryFn: () => api.recent(playerId, 5),
+  })
+
+  // La temporada más reciente que jugó. Los puestos de liga solo tienen
+  // sentido dentro de una temporada concreta.
+  const ultimaTemporada = jugador.data?.seasons?.at(-1)
+  const ranks = useQuery({
+    queryKey: ['ranks', playerId, ultimaTemporada],
+    queryFn: () => api.ranks(playerId, ultimaTemporada as string),
+    enabled: Boolean(ultimaTemporada),
+  })
+
   const tendencia = useQuery({
     queryKey: ['trend', playerId, stat],
     queryFn: () => api.trend(playerId, stat),
@@ -47,7 +72,6 @@ export function PlayerPage() {
   if (jugador.error) return <ErrorBox error={jugador.error} />
   if (!jugador.data) return <Loading />
 
-  const p = jugador.data
   const opcionesStat = (catalogo.data?.stats ?? []).map((s) => ({
     value: s.value,
     label: s.label,
@@ -56,144 +80,44 @@ export function PlayerPage() {
     value: d.value,
     label: d.label,
   }))
-
-  // Solo temporada regular, que es donde las comparaciones tienen sentido.
   const regulares = (temporadas.data ?? []).filter((t) => t.season_type === 'regular')
 
   return (
     <div className="space-y-6">
-      {/* --- Cabecera --- */}
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{p.full_name}</h1>
-        <p className="mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
-          {[
-            p.position,
-            p.age ? `${p.age} años` : null,
-            p.height_cm ? `${p.height_cm} cm` : null,
-            p.weight_kg ? `${p.weight_kg} kg` : null,
-            p.teams.length ? p.teams.join(', ') : null,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
-      </div>
+      {/* 1. Identidad */}
+      <PlayerHeader p={jugador.data} />
 
-      {/* --- Filtros: una sola fila arriba, no dentro de cada tarjeta --- */}
-      <div className="flex flex-wrap items-center gap-4">
-        <Select label="Estadística" value={stat} onChange={setStat} options={opcionesStat} />
-        <Select label="Split por" value={dimension} onChange={setDimension} options={opcionesDim} />
-      </div>
+      {/* 2. Rendimiento de la última temporada, con su puesto en la liga */}
+      {ranks.data && (
+        <Card
+          title={`Temporada regular ${ranks.data.season_id}`}
+          subtitle="Promedios y puesto en la liga"
+        >
+          <SeasonTiles ranks={ranks.data} />
+        </Card>
+      )}
+      {ultimaTemporada && ranks.isFetched && !ranks.data && (
+        <Card title={`Temporada regular ${ultimaTemporada}`}>
+          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            No alcanza el mínimo de 20 partidos y 15 minutos por partido para entrar
+            en el ranking de la liga. Compararlo con los titulares no daría un
+            número interpretable.
+          </p>
+        </Card>
+      )}
 
-      {/* --- Tendencia --- */}
-      <Card
-        title="Trayectoria"
-        subtitle={tendencia.data?.stat_label}
-        right={
-          tendencia.data && (
-            <div className="flex items-center gap-3">
-              <span
-                className="inline-flex items-center gap-1.5 text-sm font-semibold"
-                style={{ color: DIRECCION[tendencia.data.direction].color }}
-              >
-                <span aria-hidden>{DIRECCION[tendencia.data.direction].icono}</span>
-                {DIRECCION[tendencia.data.direction].texto}
-              </span>
-              <ReliabilityBadge
-                reliability={tendencia.data.reliability}
-                n={tendencia.data.n}
-              />
-            </div>
-          )
-        }
-      >
-        {tendencia.error ? (
-          <ErrorBox error={tendencia.error} />
-        ) : !tendencia.data ? (
+      {/* 3. Últimos partidos */}
+      <Card title="Últimos partidos">
+        {recientes.error ? (
+          <ErrorBox error={recientes.error} />
+        ) : !recientes.data ? (
           <Loading />
         ) : (
-          <div className="space-y-4">
-            <TrendChart trend={tendencia.data} />
-
-            {tendencia.data.direction !== 'indeterminada' && (
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Metrica
-                  etiqueta="Cambio por temporada"
-                  valor={fmtSigned(tendencia.data.slope_per_season)}
-                  detalle={`IC95 ${fmtSigned(tendencia.data.ci95_low)} a ${fmtSigned(
-                    tendencia.data.ci95_high,
-                  )}`}
-                />
-                <Metrica
-                  etiqueta="Tau de Kendall"
-                  valor={fmt(tendencia.data.tau)}
-                  detalle="Fuerza de la tendencia (−1 a 1)"
-                />
-                <Metrica
-                  etiqueta="Varianza explicada"
-                  valor={fmtPct(tendencia.data.r_squared)}
-                  detalle="Cuánto del rendimiento explica el paso del tiempo"
-                />
-              </div>
-            )}
-
-            <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-              {tendencia.data.note}
-            </p>
-          </div>
+          <RecentGames games={recientes.data} />
         )}
       </Card>
 
-      {/* --- Splits --- */}
-      <Card
-        title={`Rendimiento por ${splits.data?.dimension_label?.toLowerCase() ?? '…'}`}
-        subtitle={
-          splits.data
-            ? `${splits.data.stat_label} · ${splits.data.total_games} partidos`
-            : undefined
-        }
-        right={
-          <button
-            onClick={() => setVerTabla((v) => !v)}
-            className="rounded-md px-2.5 py-1.5 text-xs"
-            style={{
-              background: 'var(--surface-1)',
-              color: 'var(--text-secondary)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            {verTabla ? 'Ver gráfico' : 'Ver tabla'}
-          </button>
-        }
-      >
-        {splits.error ? (
-          <ErrorBox error={splits.error} />
-        ) : !splits.data ? (
-          <Loading />
-        ) : (
-          <div className="space-y-4">
-            {!splits.data.any_distinguishable && (
-              <NoiseWarning>
-                <strong>No hay ningún patrón aquí.</strong> Las diferencias entre
-                niveles son las que cabría esperar del azar. Los valores mostrados
-                están ajustados hacia el promedio general del jugador, que es la
-                estimación honesta cuando la muestra no da para más.
-              </NoiseWarning>
-            )}
-
-            {verTabla ? (
-              <SplitsTable data={splits.data} />
-            ) : (
-              <SplitsChart data={splits.data} />
-            )}
-
-            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              {splits.data.caveat}
-            </p>
-          </div>
-        )}
-      </Card>
-
-      {/* --- Temporadas --- */}
+      {/* 4. Por temporada */}
       <Card title="Por temporada" subtitle="Temporada regular">
         {temporadas.isLoading ? (
           <Loading />
@@ -239,6 +163,111 @@ export function PlayerPage() {
           </div>
         )}
       </Card>
+
+      {/* --- A partir de aquí, análisis --- */}
+      <div className="flex flex-wrap items-center gap-4 pt-2">
+        <h2 className="text-sm font-semibold">Análisis</h2>
+        <Select label="Estadística" value={stat} onChange={setStat} options={opcionesStat} />
+        <Select label="Split por" value={dimension} onChange={setDimension} options={opcionesDim} />
+      </div>
+
+      {/* 5. Trayectoria */}
+      <Card
+        title="Trayectoria"
+        subtitle={tendencia.data?.stat_label}
+        right={
+          tendencia.data && (
+            <div className="flex items-center gap-3">
+              <span
+                className="inline-flex items-center gap-1.5 text-sm font-semibold"
+                style={{ color: DIRECCION[tendencia.data.direction].color }}
+              >
+                <span aria-hidden>{DIRECCION[tendencia.data.direction].icono}</span>
+                {DIRECCION[tendencia.data.direction].texto}
+              </span>
+              <ReliabilityBadge reliability={tendencia.data.reliability} n={tendencia.data.n} />
+            </div>
+          )
+        }
+      >
+        {tendencia.error ? (
+          <ErrorBox error={tendencia.error} />
+        ) : !tendencia.data ? (
+          <Loading />
+        ) : (
+          <div className="space-y-4">
+            <TrendChart trend={tendencia.data} />
+            {tendencia.data.direction !== 'indeterminada' && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Metrica
+                  etiqueta="Cambio por temporada"
+                  valor={fmtSigned(tendencia.data.slope_per_season)}
+                  detalle={`IC95 ${fmtSigned(tendencia.data.ci95_low)} a ${fmtSigned(
+                    tendencia.data.ci95_high,
+                  )}`}
+                />
+                <Metrica
+                  etiqueta="Tau de Kendall"
+                  valor={fmt(tendencia.data.tau)}
+                  detalle="Fuerza de la tendencia (−1 a 1)"
+                />
+                <Metrica
+                  etiqueta="Varianza explicada"
+                  valor={fmtPct(tendencia.data.r_squared)}
+                  detalle="Cuánto del rendimiento explica el paso del tiempo"
+                />
+              </div>
+            )}
+            <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              {tendencia.data.note}
+            </p>
+          </div>
+        )}
+      </Card>
+
+      {/* 6. Splits — sección secundaria */}
+      <Card
+        title={`Rendimiento por ${splits.data?.dimension_label?.toLowerCase() ?? '…'}`}
+        subtitle={
+          splits.data
+            ? `${splits.data.stat_label} · ${splits.data.total_games} partidos`
+            : undefined
+        }
+        right={
+          <button
+            onClick={() => setVerTabla((v) => !v)}
+            className="rounded-md px-2.5 py-1.5 text-xs"
+            style={{
+              background: 'var(--surface-1)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            {verTabla ? 'Ver gráfico' : 'Ver tabla'}
+          </button>
+        }
+      >
+        {splits.error ? (
+          <ErrorBox error={splits.error} />
+        ) : !splits.data ? (
+          <Loading />
+        ) : (
+          <div className="space-y-4">
+            {!splits.data.any_distinguishable && (
+              <NoiseWarning>
+                <strong>No hay ningún patrón aquí.</strong> Las diferencias entre
+                niveles son las que cabría esperar del azar. Los valores mostrados
+                están ajustados hacia el promedio general del jugador, que es la
+                estimación honesta cuando la muestra no da para más.
+              </NoiseWarning>
+            )}
+            {verTabla ? <SplitsTable data={splits.data} /> : <SplitsChart data={splits.data} />}
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {splits.data.caveat}
+            </p>
+          </div>
+        )}
+      </Card>
     </div>
   )
 }
@@ -260,7 +289,6 @@ function Metrica({
       <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
         {etiqueta}
       </div>
-      {/* Cifra suelta: figuras proporcionales, no tabulares. */}
       <div className="mt-0.5 text-xl font-semibold">{valor}</div>
       <div className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
         {detalle}

@@ -1,7 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
 const enlaces = [
-  { to: '/', label: 'Buscar', end: true },
+  { to: '/', label: 'Jugadores', end: true },
+  { to: '/equipos', label: 'Equipos' },
+  { to: '/clasificacion', label: 'Clasificación' },
   { to: '/tendencias', label: 'Al alza y en declive' },
 ]
 

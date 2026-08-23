@@ -338,11 +338,23 @@ def get_recent_games(session: Session, player_id: int, limit: int = 5) -> list[d
     return salida
 
 
-# Mínimos para entrar en el ranking de liga. Mismo criterio que usa
-# `mv_league_season_baselines`: sin él, un jugador con dos partidos y 30 puntos
-# de media encabezaría la lista de anotadores.
-RANK_MIN_GAMES = 20
-RANK_MIN_SECONDS_PER_GAME = 900  # 15 minutos
+# Mínimo para entrar en el ranking de liga: **la regla oficial de la NBA**, que
+# exige haber disputado el 70% de los partidos (58 de 82) para aparecer en las
+# tablas de líderes por partido.
+#
+# Se adoptó tras comparar contra ESPN. El umbral anterior (20 partidos y 15
+# minutos, heredado de `mv_league_season_baselines`) era mucho más permisivo y
+# daba puestos distintos a los publicados: Dončić salía 30º en rebotes cuando
+# todas las fuentes decían 22º. Con la regla oficial coincide exacto, igual que
+# en puntos (1º) y asistencias (3º).
+#
+# LÍMITE CONOCIDO: para los PORCENTAJES la NBA no usa partidos sino mínimos de
+# intentos (300 tiros de campo anotados para el FG%). Aquí se aplica el mismo
+# umbral de partidos a todas las categorías, así que los puestos de FG% y TS%
+# pueden diferir de los publicados. Los de puntos, rebotes, asistencias, robos
+# y tapones sí coinciden.
+GAMES_IN_SEASON = 82
+RANK_MIN_GAMES = round(GAMES_IN_SEASON * 0.70)  # 58
 
 
 def get_league_ranks(session: Session, player_id: int, season: str) -> dict | None:
@@ -373,9 +385,7 @@ def get_league_ranks(session: Session, player_id: int, season: str) -> dict | No
             GROUP BY player_id
         ),
         cualificados AS (
-            SELECT * FROM combinados
-            WHERE gp >= :min_games
-              AND secs::numeric / NULLIF(gp, 0) >= :min_secs
+            SELECT * FROM combinados WHERE gp >= :min_games
         ),
         puestos AS (
             SELECT player_id, gp,
@@ -393,11 +403,6 @@ def get_league_ranks(session: Session, player_id: int, season: str) -> dict | No
     """)
     fila = session.execute(
         sql,
-        {
-            "pid": player_id,
-            "season": season,
-            "min_games": RANK_MIN_GAMES,
-            "min_secs": RANK_MIN_SECONDS_PER_GAME,
-        },
+        {"pid": player_id, "season": season, "min_games": RANK_MIN_GAMES},
     ).mappings().first()
     return dict(fila) if fila else None

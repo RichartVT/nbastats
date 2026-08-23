@@ -1,6 +1,7 @@
 import type {
-  Catalog, LeadersResponse, Player, PlayerSearchResult,
-  PlayerSeason, SplitsResponse, Trend,
+  Catalog, HeadToHead, LeadersResponse, Player, PlayerRanks,
+  PlayerSearchResult, PlayerSeason, RecentGame, SplitsResponse,
+  Standing, Team, TeamGame, TeamSummary, Trend,
 } from './types'
 
 const BASE = '/api'
@@ -32,4 +33,28 @@ export const api = {
     get<LeadersResponse>('/leaders/trending', {
       direction, stat, min_games: minGames, limit,
     }),
+
+  // --- Ficha de jugador ---
+  recent: (id: number, limit = 5) =>
+    get<RecentGame[]>(`/players/${id}/recent`, { limit }),
+  ranks: (id: number, season: string) =>
+    get<PlayerRanks | null>(`/players/${id}/ranks`, { season }),
+
+  // --- Equipos ---
+  teams: (season?: string) => get<TeamSummary[]>('/teams', season ? { season } : {}),
+  team: (id: number, season?: string) =>
+    get<Team>(`/teams/${id}`, season ? { season } : {}),
+  teamGames: (id: number, seasons?: string[], limit?: number) =>
+    get<TeamGame[]>(`/teams/${id}/games`, {
+      ...(seasons?.length ? { seasons: seasons.join(',') } : {}),
+      ...(limit ? { limit } : {}),
+    }),
+  standings: (season?: string) =>
+    get<Standing[]>('/standings', season ? { season } : {}),
+  headToHead: (a: number, b: number) => get<HeadToHead>(`/teams/${a}/vs/${b}`),
+  teamTrend: (id: number, stat: string) =>
+    get<Record<string, unknown>>(`/teams/${id}/trend`, { stat }),
+  teamSplits: (id: number, dimension: string, stat: string) =>
+    get<Record<string, unknown>>(`/teams/${id}/splits`, { dimension, stat }),
+  teamCatalog: () => get<{ stats: { value: string; label: string }[] }>('/team-catalog'),
 }

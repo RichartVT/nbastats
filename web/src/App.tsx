@@ -4,6 +4,9 @@ import { Layout } from './components/Layout'
 import { LeadersPage } from './pages/LeadersPage'
 import { PlayerPage } from './pages/PlayerPage'
 import { SearchPage } from './pages/SearchPage'
+import { StandingsPage } from './pages/StandingsPage'
+import { TeamPage } from './pages/TeamPage'
+import { TeamsPage } from './pages/TeamsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +28,9 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<SearchPage />} />
             <Route path="/jugador/:id" element={<PlayerPage />} />
+            <Route path="/equipos" element={<TeamsPage />} />
+            <Route path="/equipo/:id" element={<TeamPage />} />
+            <Route path="/clasificacion" element={<StandingsPage />} />
             <Route path="/tendencias" element={<LeadersPage />} />
           </Route>
         </Routes>
