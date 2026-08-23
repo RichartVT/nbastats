@@ -3,8 +3,9 @@
     uv run nbastats status                # qué hay cargado
     uv run nbastats setup                 # migraciones + vistas
     uv run nbastats ingest-seasons        # carga histórica completa
-    uv run nbastats ingest-bios           # biografías (fechas de nacimiento)
-    uv run nbastats enrich                # hora de inicio + sedes neutrales
+    uv run nbastats ingest-bios           # ficha de jugador (nacimiento, dorsal…)
+    uv run nbastats ingest-teams          # fichas, plantillas y clasificación
+    uv run nbastats enrich                # hora de inicio, sede y tipo de partido
     uv run nbastats daily                 # actualización diaria
     uv run nbastats refresh               # recalcula derivadas y vistas
 """
@@ -88,6 +89,26 @@ def status() -> None:
             "splits por horario",
         )
         cob.add_row("Sedes neutrales", f"{neutrales:,}", "split local/visitante limpio")
+
+        con_dorsal = s.scalar(
+            select(func.count()).select_from(m.Player).where(m.Player.jersey_number.isnot(None))
+        )
+        etiquetados = s.scalar(
+            select(func.count()).select_from(m.Game).where(m.Game.game_label.isnot(None))
+        )
+        plantillas = s.scalar(select(func.count()).select_from(m.TeamSeasonRoster))
+        clasif = s.scalar(select(func.count()).select_from(m.TeamStanding))
+        con_estadio = s.scalar(
+            select(func.count()).select_from(m.Team).where(m.Team.arena.isnot(None))
+        )
+        cob.add_row(
+            "Dorsal y estatus", f"{con_dorsal:,}/{total_jug:,}" if total_jug else "—",
+            "ficha de jugador",
+        )
+        cob.add_row("Etiqueta de partido", f"{etiquetados:,}", "NBA Cup, partidos internacionales")
+        cob.add_row("Fichas de equipo", f"{con_estadio:,}/30", "estadio, entrenador, GM")
+        cob.add_row("Plantillas", f"{plantillas:,}", "quién jugaba en cada equipo y año")
+        cob.add_row("Clasificación", f"{clasif:,}", "posiciones y récords")
         console.print(cob)
 
         temporadas = s.execute(
@@ -172,6 +193,28 @@ def enrich(
     )
 
 
+@app.command("ingest-teams")
+def ingest_teams_cmd(
+    seasons: str = typer.Option("", help="Coma-separadas. Vacío = las del .env"),
+    verbose: bool = False,
+) -> None:
+    """Ficha de los equipos, plantillas por temporada y clasificación."""
+    _configurar_logging(verbose)
+    from nbastats.ingest.teams import ingest_all_team_data
+
+    lista = [x.strip() for x in seasons.split(",") if x.strip()] or get_settings().season_list
+    r = ingest_all_team_data(lista)
+    console.print(
+        f"[green]{r['equipos']} fichas · {r['plantillas']:,} fichas de plantilla · "
+        f"{r['clasificacion']} filas de clasificación[/green]"
+    )
+    if r["plantillas_omitidas"]:
+        console.print(
+            f"[yellow]{r['plantillas_omitidas']} jugadores de plantilla omitidos "
+            f"(nunca disputaron un partido)[/yellow]"
+        )
+
+
 @app.command()
 def refresh(verbose: bool = False) -> None:
     """Recalcula columnas derivadas y refresca las vistas materializadas."""
@@ -198,6 +241,7 @@ def daily(verbose: bool = False) -> None:
     from nbastats.ingest.bio import ingest_player_bios
     from nbastats.ingest.bulk import ingest_seasons
     from nbastats.ingest.enrich import enrich_games
+    from nbastats.ingest.teams import ingest_all_team_data
 
     season = temporada_actual()
     console.print(f"[bold]Temporada actual: {season}[/bold]")
@@ -210,6 +254,11 @@ def daily(verbose: bool = False) -> None:
 
     bios = ingest_player_bios(only_missing=True)
     console.print(f"  {bios['actualizados']:,} biografías nuevas")
+
+    equipos = ingest_all_team_data([season])
+    console.print(
+        f"  {equipos['equipos']} fichas de equipo, {equipos['plantillas']} de plantilla"
+    )
 
     compute_derived_columns()
     refresh_views()

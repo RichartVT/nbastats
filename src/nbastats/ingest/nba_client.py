@@ -200,6 +200,52 @@ class NBAClient:
         ).get_dict()
         return data.get("scoreboard", {}).get("games", [])
 
+    def team_details(self, team_id: int) -> dict[str, list[dict]]:
+        """Ficha de la franquicia: estadio, capacidad, propietario, GM, entrenador.
+
+        Devuelve TODOS los bloques del endpoint indexados por nombre
+        (`TeamBackground`, `TeamHistory`, `TeamAwardsChampionships`...), no solo
+        el primero, porque aquí el interesante no siempre es el bloque inicial.
+        """
+        from nba_api.stats.endpoints import teamdetails
+
+        self._throttle()
+        payload = teamdetails.TeamDetails(
+            team_id=team_id, timeout=self.timeout
+        ).get_dict()
+        return {
+            r["name"]: [dict(zip(r["headers"], fila, strict=True)) for fila in r["rowSet"]]
+            for r in payload.get("resultSets", [])
+        }
+
+    def team_roster(self, team_id: int, season: str) -> dict[str, list[dict]]:
+        """Plantilla y cuerpo técnico de un equipo en una temporada."""
+        from nba_api.stats.endpoints import commonteamroster
+
+        self._throttle()
+        payload = commonteamroster.CommonTeamRoster(
+            team_id=team_id, season=season, timeout=self.timeout
+        ).get_dict()
+        return {
+            r["name"]: [dict(zip(r["headers"], fila, strict=True)) for fila in r["rowSet"]]
+            for r in payload.get("resultSets", [])
+        }
+
+    def standings(self, season: str, season_type: str = "Regular Season") -> list[dict]:
+        """Clasificación oficial, con los desempates de la NBA ya aplicados.
+
+        `PlayoffRank` llega calculado. Recalcularlo por nuestra cuenta sería
+        reimplementar un reglamento lleno de casos particulares para obtener,
+        en el mejor de los casos, el mismo número.
+        """
+        from nba_api.stats.endpoints import leaguestandingsv3
+
+        return self._call(
+            leaguestandingsv3.LeagueStandingsV3,
+            season=season,
+            season_type=season_type,
+        )
+
     @staticmethod
     def static_teams() -> list[dict]:
         """Los 30 equipos, desde el paquete estático (sin petición de red)."""

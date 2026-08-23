@@ -50,7 +50,26 @@ def _to_row(raw: dict[str, Any]) -> dict:
         "draft_year": _int_or_none(raw.get("DRAFT_YEAR")),
         "from_year": _int_or_none(raw.get("FROM_YEAR")),
         "to_year": _int_or_none(raw.get("TO_YEAR")),
+        # --- Ficha ---
+        "jersey_number": (str(raw["JERSEY"]).strip() or None) if raw.get("JERSEY") else None,
+        "roster_status": (raw.get("ROSTERSTATUS") or None),
+        "season_experience": _int_or_none(raw.get("SEASON_EXP")),
+        "current_team_id": _team_or_none(raw.get("TEAM_ID")),
+        "draft_round": _int_or_none(raw.get("DRAFT_ROUND")),
+        "draft_number": _int_or_none(raw.get("DRAFT_NUMBER")),
+        "school": (raw.get("SCHOOL") or None),
     }
+
+
+def _team_or_none(value: Any) -> int | None:
+    """TEAM_ID a clave ajena válida.
+
+    La API devuelve `0` para agentes libres y retirados, no NULL. Insertarlo
+    tal cual violaría la clave ajena contra `teams`, así que se traduce a None:
+    "sin equipo" es exactamente lo que significa.
+    """
+    team_id = _int_or_none(value)
+    return team_id or None
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -77,7 +96,12 @@ def ingest_player_bios(
     with session_scope() as session:
         stmt = select(Player.player_id)
         if only_missing:
-            stmt = stmt.where(Player.birthdate.is_(None))
+            # El criterio es "le falta ALGO", no solo la fecha de nacimiento:
+            # los jugadores cargados antes de añadir los campos de ficha tienen
+            # birthdate pero no roster_status, y hay que volver a pedirlos.
+            stmt = stmt.where(
+                Player.birthdate.is_(None) | Player.roster_status.is_(None)
+            )
         pendientes = sorted(session.scalars(stmt).all())
 
     if not pendientes:
@@ -128,6 +152,8 @@ def ingest_player_bios(
 BIO_COLUMNS = (
     "birthdate", "height_cm", "weight_kg", "position",
     "country", "draft_year", "from_year", "to_year",
+    "jersey_number", "roster_status", "season_experience",
+    "current_team_id", "draft_round", "draft_number", "school",
 )
 
 

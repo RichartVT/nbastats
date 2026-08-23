@@ -5,7 +5,7 @@ inicial ni marcan las sedes neutrales. `ScoreboardV3` sí, a costa de una
 petición por FECHA (no por partido): ~900 fechas para 5 temporadas, unos 10
 minutos una sola vez.
 
-Aporta dos cosas:
+Aporta tres cosas:
 
 1. **`tipoff_utc`** — habilita preguntas sobre horario ("¿rinde peor en partidos
    nocturnos?"), de la misma familia que los splits por día de la semana.
@@ -13,6 +13,11 @@ Aporta dos cosas:
 2. **`is_neutral_site` fiable** — la detección de `bulk.py` (los dos equipos
    marcados con `@` en MATCHUP) solo funciona desde 2024-25. Aquí se combinan
    todas las señales disponibles.
+
+3. **`game_label` / `game_sublabel`** — el tipo real del partido tal cual lo
+   publica la NBA: 'Emirates NBA Cup' + 'East Group C', 'NBA Paris Game'. Sin
+   esto no se puede distinguir un partido de la NBA Cup de uno cualquiera de
+   temporada regular, porque a efectos de clasificación **son lo mismo**.
 
 LÍMITE CONOCIDO: en 2022-23 la API no expone ninguna señal de sede neutral —
 ni `isNeutral`, ni `gameLabel`, ni MATCHUP. Los partidos internacionales de esa
@@ -93,6 +98,11 @@ def enrich_games(
         stmt = select(Game.game_date_local).distinct()
         if only_missing:
             stmt = stmt.where(Game.tipoff_utc.is_(None))
+            # Nota: este filtro NO detecta partidos a los que solo les falta la
+            # etiqueta, porque `game_label` es NULL de forma legítima en la
+            # inmensa mayoría (un partido normal no lleva etiqueta). Para
+            # rellenar etiquetas en datos ya cargados hay que usar
+            # `only_missing=False`.
         fechas = sorted(session.scalars(stmt).all())
 
     if not fechas:
@@ -117,6 +127,8 @@ def enrich_games(
                     "gid": g["gameId"],
                     "tipoff_utc": _parse_utc(g.get("gameTimeUTC")),
                     "is_neutral_site": is_neutral_site(g),
+                    "game_label": (g.get("gameLabel") or "").strip() or None,
+                    "game_sublabel": (g.get("gameSubLabel") or "").strip() or None,
                 }
             )
 
@@ -130,6 +142,8 @@ def enrich_games(
                     .values(
                         tipoff_utc=u["tipoff_utc"],
                         is_neutral_site=Game.is_neutral_site | u["is_neutral_site"],
+                        game_label=u["game_label"],
+                        game_sublabel=u["game_sublabel"],
                     )
                 )
                 if res.rowcount:

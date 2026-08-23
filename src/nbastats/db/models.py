@@ -91,6 +91,18 @@ class Team(Base):
     # derivar game_date_local a partir del tipoff en UTC.
     arena_timezone: Mapped[str | None] = mapped_column(String(50))
 
+    # Ficha de la franquicia (endpoint TeamDetails).
+    arena: Mapped[str | None] = mapped_column(String(80))
+    arena_capacity: Mapped[int | None] = mapped_column(Integer)
+    owner: Mapped[str | None] = mapped_column(String(120))
+    general_manager: Mapped[str | None] = mapped_column(String(80))
+    head_coach: Mapped[str | None] = mapped_column(String(80))
+    year_founded: Mapped[int | None] = mapped_column(SmallInteger)
+
+    # El logo NO se guarda: se deriva del team_id
+    # (cdn.nba.com/logos/nba/{team_id}/primary/L/logo.svg). Guardar una URL
+    # calculable solo añade una copia que se puede quedar obsoleta.
+
 
 class Player(Base):
     __tablename__ = "players"
@@ -111,6 +123,24 @@ class Player(Base):
     country: Mapped[str | None] = mapped_column(String(60))
     from_year: Mapped[int | None] = mapped_column(SmallInteger)
     to_year: Mapped[int | None] = mapped_column(SmallInteger)
+
+    # --- Ficha de jugador ---
+    # Todo esto ya venía en la respuesta de CommonPlayerInfo que la ingesta
+    # descargaba y descartaba: no cuesta ni una petición extra.
+
+    # Texto, no entero: hay dorsales "00" y "0", que son distintos.
+    jersey_number: Mapped[str | None] = mapped_column(String(4))
+    roster_status: Mapped[str | None] = mapped_column(String(20))  # Active/Inactive
+    season_experience: Mapped[int | None] = mapped_column(SmallInteger)
+    current_team_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("teams.team_id")
+    )
+    draft_round: Mapped[int | None] = mapped_column(SmallInteger)
+    draft_number: Mapped[int | None] = mapped_column(SmallInteger)
+    school: Mapped[str | None] = mapped_column(String(80))
+
+    # La foto NO se guarda: se deriva del player_id
+    # (cdn.nba.com/headshots/nba/latest/260x190/{player_id}.png).
 
 
 class Season(Base):
@@ -178,6 +208,18 @@ class Game(Base):
     is_neutral_site: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+
+    # Etiqueta del partido, tal cual la publica la NBA: 'Emirates NBA Cup',
+    # 'NBA Paris Game'... con su ronda en el sublabel ('East Group C',
+    # 'West Semifinal').
+    #
+    # Va como ETIQUETA y no como season_type porque **un partido de la NBA Cup
+    # es un partido de temporada regular**: la fase de grupos cuenta para la
+    # clasificación y solo la final queda fuera. Convertirlo en tipo de
+    # temporada descuadraría los 1.230 partidos por temporada que verifican
+    # los tests.
+    game_label: Mapped[str | None] = mapped_column(String(60))
+    game_sublabel: Mapped[str | None] = mapped_column(String(40))
 
     home_team: Mapped[Team] = relationship(foreign_keys=[home_team_id])
     away_team: Mapped[Team] = relationship(foreign_keys=[away_team_id])
@@ -321,6 +363,78 @@ class PlayerGameAdvanced(Base):
     net_rating: Mapped[Decimal | None] = mapped_column(Rate)
     pace: Mapped[Decimal | None] = mapped_column(Rate)
     pie: Mapped[Decimal | None] = mapped_column(Pct)
+
+
+class TeamSeasonRoster(Base):
+    """Plantilla de un equipo en una temporada concreta.
+
+    Se guarda por temporada y no solo la actual porque, si no, mirar a los
+    Nuggets de 2022-23 mostraría la plantilla de 2025-26 — que es justo lo
+    contrario de lo que sirve para analizar una temporada pasada.
+    """
+
+    __tablename__ = "team_season_rosters"
+    __table_args__ = (Index("ix_roster_player", "player_id", "season_id"),)
+
+    season_id: Mapped[str] = mapped_column(
+        String(7), ForeignKey("seasons.season_id"), primary_key=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("teams.team_id"), primary_key=True
+    )
+    player_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("players.player_id"), primary_key=True
+    )
+
+    jersey_number: Mapped[str | None] = mapped_column(String(4))
+    position: Mapped[str | None] = mapped_column(String(20))
+    age: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
+    how_acquired: Mapped[str | None] = mapped_column(String(120))
+
+
+class TeamStanding(Base):
+    """Clasificación oficial de un equipo en una temporada.
+
+    Viene de `LeagueStandingsV3`, que devuelve `playoff_rank` ya calculado con
+    los desempates oficiales de la NBA aplicados. Recalcularlos por nuestra
+    cuenta sería reimplementar un reglamento con muchos casos particulares para
+    obtener, en el mejor de los casos, el mismo número.
+    """
+
+    __tablename__ = "team_standings"
+    __table_args__ = (Index("ix_standings_conf", "season_id", "conference", "playoff_rank"),)
+
+    season_id: Mapped[str] = mapped_column(
+        String(7), ForeignKey("seasons.season_id"), primary_key=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("teams.team_id"), primary_key=True
+    )
+
+    conference: Mapped[str | None] = mapped_column(String(10))
+    division: Mapped[str | None] = mapped_column(String(20))
+    playoff_rank: Mapped[int | None] = mapped_column(SmallInteger)
+
+    wins: Mapped[int | None] = mapped_column(SmallInteger)
+    losses: Mapped[int | None] = mapped_column(SmallInteger)
+    win_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+
+    # Récords como texto ("41-11"): así los publica la NBA y así se muestran.
+    # Descomponerlos en dos enteros solo para volver a concatenarlos al pintar
+    # no aporta nada; si alguna vez hacen falta por separado, se parsean.
+    conference_record: Mapped[str | None] = mapped_column(String(12))
+    division_record: Mapped[str | None] = mapped_column(String(12))
+    home_record: Mapped[str | None] = mapped_column(String(12))
+    road_record: Mapped[str | None] = mapped_column(String(12))
+    last_10: Mapped[str | None] = mapped_column(String(12))
+
+    # Entero con signo: +4 son cuatro victorias seguidas, -1 una derrota.
+    current_streak: Mapped[int | None] = mapped_column(SmallInteger)
+    games_back: Mapped[Decimal | None] = mapped_column(Numeric(5, 1))
+
+    points_pg: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    opp_points_pg: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    diff_points_pg: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
 
 
 class IngestLog(Base):
