@@ -3,9 +3,10 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { SplitsCard, TrendCard } from '../components/AnalysisSection'
+import { GameHistory } from '../components/GameHistory'
 import { Card, ErrorBox, Loading, Select } from '../components/Layout'
-import { GameTypeBadge, PlayerPhoto, TeamLogo, WinLoss } from '../components/Media'
-import { fmt, fmtDate, fmtSigned } from '../lib/format'
+import { PlayerPhoto, TeamLogo } from '../components/Media'
+import { fmt, fmtSigned } from '../lib/format'
 
 const TEMPORADAS = ['2025-26', '2024-25', '2023-24', '2022-23', '2021-22']
 
@@ -211,63 +212,14 @@ export function TeamPage() {
       {/* --- Historial de partidos --- */}
       <Card
         title={`Partidos ${season}`}
-        subtitle={partidos.data ? `${partidos.data.length} partidos` : undefined}
+        subtitle="Incluye playoffs, play-in y NBA Cup. Haz clic en un partido para ver todo."
       >
         {partidos.error ? (
           <ErrorBox error={partidos.error} />
         ) : !partidos.data ? (
           <Loading />
         ) : (
-          <div className="max-h-[32rem] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0" style={{ background: 'var(--surface-1)' }}>
-                <tr className="text-left" style={{ color: 'var(--text-secondary)' }}>
-                  <th className="py-2 pr-3 font-medium">Fecha</th>
-                  <th className="py-2 pr-3 font-medium">Rival</th>
-                  <th className="py-2 pr-3 font-medium">Resultado</th>
-                  <th className="py-2 pr-3 text-right font-medium">Of</th>
-                  <th className="py-2 pr-3 text-right font-medium">Def</th>
-                  <th className="py-2 text-right font-medium">Ritmo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {partidos.data.map((g) => (
-                  <tr key={g.game_id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td className="whitespace-nowrap py-2 pr-3">
-                      <div>{fmtDate(g.date)}</div>
-                      <GameTypeBadge type={g.game_type} />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                        <span style={{ color: 'var(--text-muted)' }}>
-                          {g.is_neutral_site ? 'en' : g.is_home ? 'vs' : '@'}
-                        </span>
-                        <TeamLogo teamId={g.opponent_id} name={g.opponent} size={20} />
-                        <Link
-                          to={`/equipo/${g.opponent_id}`}
-                          className="hover:underline"
-                          style={{ color: 'var(--series-1)' }}
-                        >
-                          {g.opponent}
-                        </Link>
-                      </span>
-                    </td>
-                    <td className="whitespace-nowrap py-2 pr-3">
-                      <WinLoss won={g.won} />{' '}
-                      <span className="tabular" style={{ color: 'var(--text-secondary)' }}>
-                        {g.pts}-{g.opp_pts}
-                      </span>
-                    </td>
-                    <td className="tabular py-2 pr-3 text-right">{fmt(g.off_rating, 1)}</td>
-                    <td className="tabular py-2 pr-3 text-right">{fmt(g.def_rating, 1)}</td>
-                    <td className="tabular py-2 text-right" style={{ color: 'var(--text-secondary)' }}>
-                      {fmt(g.pace, 1)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <GameHistory games={partidos.data} />
         )}
       </Card>
 

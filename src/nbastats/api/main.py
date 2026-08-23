@@ -28,10 +28,12 @@ from nbastats.api import queries as q
 from nbastats.api.catalog import DIMENSIONS, STATS, Dimension, Stat
 from nbastats.api.routers import teams as teams_router
 from nbastats.api.schemas import (
+    GameDetailOut,
     GameLogEntryOut,
     GameTypeOut,
     LeaderOut,
     LeadersResponse,
+    PlayerBoxScoreOut,
     PlayerOut,
     PlayerRanksOut,
     PlayerSeasonOut,
@@ -39,6 +41,7 @@ from nbastats.api.schemas import (
     RecentGameOut,
     SplitOut,
     SplitsResponse,
+    TeamBoxScoreOut,
     TrendOut,
 )
 from nbastats.db.session import get_db
@@ -294,6 +297,64 @@ def get_ranks(
         blk=rk("bpg", "bpg_rank"),
         fg_pct=rk("fg_pct", "fg_pct_rank"),
         ts_pct=rk("ts_pct", "ts_pct_rank"),
+    )
+
+
+# =========================================================================
+# Partidos
+# =========================================================================
+
+
+@app.get("/games/{game_id}", response_model=GameDetailOut, tags=["partidos"])
+def get_game(game_id: str, db: Session = Depends(get_db)) -> GameDetailOut:
+    """Todo lo que hay de un partido: los dos equipos y todos los jugadores.
+
+    `game_id` va como TEXTO en la ruta, no como entero: los ids de la NBA
+    llevan ceros a la izquierda ("0042500405") y codifican el tipo de partido
+    en la tercera posición. Convertirlos a número los corrompe.
+    """
+    cabecera = q.get_game(db, game_id)
+    if not cabecera:
+        raise HTTPException(404, f"No existe el partido {game_id}")
+
+    equipos = q.get_game_team_stats(db, game_id)
+    if len(equipos) != 2:
+        raise HTTPException(
+            500, f"El partido {game_id} tiene {len(equipos)} equipos, se esperaban 2"
+        )
+
+    jugadores = q.get_game_player_stats(db, game_id)
+    por_equipo: dict[int, list[PlayerBoxScoreOut]] = {}
+    for j in jugadores:
+        fila = PlayerBoxScoreOut(
+            **{k: v for k, v in j.items() if k in PlayerBoxScoreOut.model_fields}
+        )
+        por_equipo.setdefault(j["team_id"], []).append(fila)
+
+    def construir(datos: dict) -> TeamBoxScoreOut:
+        return TeamBoxScoreOut(
+            **{k: v for k, v in datos.items() if k in TeamBoxScoreOut.model_fields},
+            players=por_equipo.get(datos["team_id"], []),
+        )
+
+    local = next(e for e in equipos if e["is_home"])
+    visitante = next(e for e in equipos if not e["is_home"])
+
+    t = describe_game(
+        cabecera["season_type"], cabecera.get("game_label"), cabecera.get("game_sublabel")
+    )
+
+    return GameDetailOut(
+        game_id=cabecera["game_id"],
+        date=cabecera["date"],
+        season_id=cabecera["season_id"],
+        game_type=GameTypeOut(key=t.key, label=t.label, is_postseason=t.is_postseason),
+        tipoff_utc=cabecera["tipoff_utc"],
+        ot_periods=cabecera["ot_periods"] or 0,
+        is_neutral_site=cabecera["is_neutral_site"],
+        attendance=cabecera["attendance"],
+        home=construir(local),
+        away=construir(visitante),
     )
 
 

@@ -153,6 +153,8 @@ export interface TeamGame {
   is_home: boolean
   is_neutral_site: boolean
   won: boolean | null
+  rest_days: number | null
+  is_back_to_back: boolean | null
   pts: number | null
   opp_pts: number | null
   point_diff: number | null
@@ -204,6 +206,7 @@ export interface PlayerSeason {
   team: string
   games_played: number
   games_with_minutes: number
+  games_started: number | null
   min_per_game: number | null
   pts_per_game: number | null
   reb_per_game: number | null
@@ -211,10 +214,107 @@ export interface PlayerSeason {
   pts_per_36: number | null
   reb_per_36: number | null
   ast_per_36: number | null
+  fgm: number | null
+  fga: number | null
+  fg_pct: number | null
+  fg3m: number | null
+  fg3a: number | null
+  fg3_pct: number | null
+  fg3m_per_game: number | null
+  fg3a_per_game: number | null
+  ftm: number | null
+  fta: number | null
+  ft_pct: number | null
+  stl: number | null
+  blk: number | null
+  tov: number | null
   ts_pct: number | null
   efg_pct: number | null
   avg_game_score: number | null
   plus_minus: number | null
+}
+
+export interface PlayerBoxScore {
+  player_id: number
+  full_name: string
+  jersey_number: string | null
+  position: string | null
+  team_id: number
+  minutes: string
+  started: boolean | null
+  pts: number | null
+  fgm: number | null
+  fga: number | null
+  fg3m: number | null
+  fg3a: number | null
+  ftm: number | null
+  fta: number | null
+  oreb: number | null
+  dreb: number | null
+  reb: number | null
+  ast: number | null
+  stl: number | null
+  blk: number | null
+  tov: number | null
+  pf: number | null
+  plus_minus: number | null
+  ts_pct: number | null
+  efg_pct: number | null
+  usg_pct: number | null
+  ast_pct: number | null
+  reb_pct: number | null
+  off_rating: number | null
+  def_rating: number | null
+  net_rating: number | null
+  pie: number | null
+  game_score: number | null
+}
+
+export interface TeamBoxScore {
+  team_id: number
+  abbreviation: string
+  full_name: string
+  is_home: boolean
+  won: boolean | null
+  pts: number | null
+  fgm: number | null
+  fga: number | null
+  fg3m: number | null
+  fg3a: number | null
+  ftm: number | null
+  fta: number | null
+  oreb: number | null
+  dreb: number | null
+  reb: number | null
+  ast: number | null
+  stl: number | null
+  blk: number | null
+  tov: number | null
+  pf: number | null
+  plus_minus: number | null
+  possessions: number | null
+  pace: number | null
+  off_rating: number | null
+  def_rating: number | null
+  net_rating: number | null
+  ts_pct: number | null
+  efg_pct: number | null
+  rest_days: number | null
+  is_back_to_back: boolean | null
+  players: PlayerBoxScore[]
+}
+
+export interface GameDetail {
+  game_id: string
+  date: string
+  season_id: string
+  game_type: GameType
+  tipoff_utc: string | null
+  ot_periods: number
+  is_neutral_site: boolean
+  attendance: number | null
+  home: TeamBoxScore
+  away: TeamBoxScore
 }
 
 /** Un nivel de un split. `value` ya viene resuelto por el backend: es la media

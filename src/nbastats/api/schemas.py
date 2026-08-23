@@ -52,13 +52,36 @@ class PlayerSeasonOut(BaseModel):
     team: str
     games_played: int
     games_with_minutes: int
+    games_started: int | None = None
     min_per_game: float | None = None
+
     pts_per_game: float | None = None
     reb_per_game: float | None = None
     ast_per_game: float | None = None
     pts_per_36: float | None = None
     reb_per_36: float | None = None
     ast_per_36: float | None = None
+
+    # --- Tiro ---
+    # Los totales viajan junto a los porcentajes a propósito: un 45% en triples
+    # con 2 intentos por partido y un 38% con 10 no describen la misma
+    # habilidad, y el porcentaje solo no permite distinguirlos.
+    fgm: int | None = None
+    fga: int | None = None
+    fg_pct: float | None = None
+    fg3m: int | None = None
+    fg3a: int | None = None
+    fg3_pct: float | None = None
+    fg3m_per_game: float | None = None
+    fg3a_per_game: float | None = None
+    ftm: int | None = None
+    fta: int | None = None
+    ft_pct: float | None = None
+
+    stl: int | None = None
+    blk: int | None = None
+    tov: int | None = None
+
     ts_pct: float | None = None
     efg_pct: float | None = None
     avg_game_score: float | None = None
@@ -385,6 +408,8 @@ class TeamGameOut(BaseModel):
     is_home: bool
     is_neutral_site: bool
     won: bool | None = None
+    rest_days: int | None = None
+    is_back_to_back: bool | None = None
     pts: int | None = None
     opp_pts: int | None = None
     point_diff: int | None = None
@@ -430,3 +455,108 @@ class HeadToHeadOut(BaseModel):
         None, description="Diferencial medio desde la perspectiva del primer equipo"
     )
     games: list[TeamGameOut] = Field(default_factory=list)
+
+
+# =========================================================================
+# Detalle de un partido: todo lo que hay
+# =========================================================================
+
+
+class PlayerBoxScoreOut(BaseModel):
+    """La línea completa de un jugador en un partido."""
+
+    player_id: int
+    full_name: str
+    jersey_number: str | None = None
+    position: str | None = None
+    team_id: int
+    minutes: str
+    started: bool | None = None
+
+    pts: int | None = None
+    fgm: int | None = None
+    fga: int | None = None
+    fg3m: int | None = None
+    fg3a: int | None = None
+    ftm: int | None = None
+    fta: int | None = None
+    oreb: int | None = None
+    dreb: int | None = None
+    reb: int | None = None
+    ast: int | None = None
+    stl: int | None = None
+    blk: int | None = None
+    tov: int | None = None
+    pf: int | None = None
+    plus_minus: int | None = None
+
+    # Avanzadas
+    ts_pct: float | None = None
+    efg_pct: float | None = None
+    usg_pct: float | None = None
+    ast_pct: float | None = None
+    reb_pct: float | None = None
+    off_rating: float | None = None
+    def_rating: float | None = None
+    net_rating: float | None = None
+    pie: float | None = None
+    game_score: float | None = None
+
+
+class TeamBoxScoreOut(BaseModel):
+    team_id: int
+    abbreviation: str
+    full_name: str
+    is_home: bool
+    won: bool | None = None
+
+    pts: int | None = None
+    fgm: int | None = None
+    fga: int | None = None
+    fg3m: int | None = None
+    fg3a: int | None = None
+    ftm: int | None = None
+    fta: int | None = None
+    oreb: int | None = None
+    dreb: int | None = None
+    reb: int | None = None
+    ast: int | None = None
+    stl: int | None = None
+    blk: int | None = None
+    tov: int | None = None
+    pf: int | None = None
+    plus_minus: int | None = None
+
+    possessions: float | None = None
+    pace: float | None = None
+    off_rating: float | None = None
+    def_rating: float | None = None
+    net_rating: float | None = None
+    ts_pct: float | None = None
+    efg_pct: float | None = None
+
+    rest_days: int | None = None
+    is_back_to_back: bool | None = None
+
+    players: list[PlayerBoxScoreOut] = Field(default_factory=list)
+
+
+class GameDetailOut(BaseModel):
+    """Todo lo que sabemos de un partido.
+
+    No hay más en la base: sin play-by-play, no existe desglose por cuarto,
+    ni secuencia de anotación, ni datos de tiro por zona. `CAPABILITIES.md` §2
+    lista lo que haría falta cargar para cada una de esas cosas.
+    """
+
+    game_id: str
+    date: dt.date
+    season_id: str
+    game_type: GameTypeOut
+    tipoff_utc: dt.datetime | None = None
+    ot_periods: int = 0
+    is_neutral_site: bool = False
+    attendance: int | None = None
+
+    home: TeamBoxScoreOut
+    away: TeamBoxScoreOut

@@ -133,6 +133,7 @@ def get_team_games(
                r.game_label, r.game_sublabel,
                opp.team_id AS opponent_id, opp.abbreviation AS opponent,
                r.is_home, r.is_neutral_site, r.won,
+               r.rest_days, r.is_back_to_back,
                r.pts, r.opp_pts, r.point_diff,
                r.reb, r.ast, r.tov,
                r.off_rating, r.def_rating, r.pace, r.ts_pct
@@ -187,6 +188,7 @@ def get_head_to_head(
                -- get_team_games() y ambas alimentan el mismo esquema.
                opp.team_id AS opponent_id, opp.abbreviation AS opponent,
                r.is_home, r.is_neutral_site, r.won,
+               r.rest_days, r.is_back_to_back,
                r.pts, r.opp_pts, r.point_diff,
                r.reb, r.ast, r.tov,
                r.off_rating, r.def_rating, r.pace, r.ts_pct

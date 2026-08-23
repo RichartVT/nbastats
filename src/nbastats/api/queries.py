@@ -84,9 +84,14 @@ def get_player_seasons(session: Session, player_id: int) -> list[dict]:
     sql = text("""
         SELECT s.season_id, s.season_type::text AS season_type,
                t.abbreviation AS team,
-               s.games_played, s.games_with_minutes, s.min_per_game,
+               s.games_played, s.games_with_minutes, s.games_started,
+               s.min_per_game,
                s.pts_per_game, s.reb_per_game, s.ast_per_game,
                s.pts_per_36, s.reb_per_36, s.ast_per_36,
+               s.fgm, s.fga, s.fg_pct,
+               s.fg3m, s.fg3a, s.fg3_pct, s.fg3m_per_game, s.fg3a_per_game,
+               s.ftm, s.fta, s.ft_pct,
+               s.stl, s.blk, s.tov,
                s.ts_pct, s.efg_pct, s.avg_game_score, s.plus_minus
         FROM mv_player_season s
         JOIN teams t ON t.team_id = s.team_id
@@ -406,3 +411,76 @@ def get_league_ranks(session: Session, player_id: int, season: str) -> dict | No
         {"pid": player_id, "season": season, "min_games": RANK_MIN_GAMES},
     ).mappings().first()
     return dict(fila) if fila else None
+
+
+# =========================================================================
+# Detalle de un partido
+# =========================================================================
+
+
+def get_game(session: Session, game_id: str) -> dict | None:
+    """Cabecera del partido: fecha, tipo, marcador y contexto."""
+    sql = text("""
+        SELECT g.game_id, g.game_date_local AS date, g.season_id,
+               g.season_type::text AS season_type,
+               g.game_label, g.game_sublabel,
+               g.tipoff_utc, g.ot_periods, g.is_neutral_site, g.attendance,
+               g.home_team_id, g.away_team_id, g.home_pts, g.away_pts
+        FROM games g WHERE g.game_id = :gid
+    """)
+    fila = session.execute(sql, {"gid": game_id}).mappings().first()
+    return dict(fila) if fila else None
+
+
+def get_game_team_stats(session: Session, game_id: str) -> list[dict]:
+    """Box score de los dos equipos, tradicional y avanzado."""
+    sql = text("""
+        SELECT t.team_id, t.abbreviation, t.full_name, t.city, t.nickname,
+               tgs.is_home, tgs.won, tgs.opponent_team_id,
+               tgs.pts, tgs.fgm, tgs.fga, tgs.fg3m, tgs.fg3a, tgs.ftm, tgs.fta,
+               tgs.oreb, tgs.dreb, tgs.reb, tgs.ast, tgs.stl, tgs.blk,
+               tgs.tov, tgs.pf, tgs.plus_minus,
+               tgs.possessions, tgs.pace,
+               tgs.off_rating, tgs.def_rating, tgs.net_rating,
+               tgs.ts_pct, tgs.efg_pct,
+               tgs.rest_days, tgs.is_back_to_back
+        FROM team_game_stats tgs
+        JOIN teams t ON t.team_id = tgs.team_id
+        WHERE tgs.game_id = :gid
+        ORDER BY tgs.is_home DESC
+    """)
+    return [dict(f) for f in session.execute(sql, {"gid": game_id}).mappings()]
+
+
+def get_game_player_stats(session: Session, game_id: str) -> list[dict]:
+    """Box score de todos los jugadores del partido, tradicional y avanzado.
+
+    Ordenado por minutos descendente dentro de cada equipo: en una ficha de
+    partido lo primero que se busca es quién jugó, no el orden alfabético.
+    """
+    sql = text("""
+        SELECT pgs.player_id, p.full_name, p.jersey_number, p.position,
+               pgs.team_id, pgs.seconds_played, pgs.started,
+               pgs.pts, pgs.fgm, pgs.fga, pgs.fg3m, pgs.fg3a, pgs.ftm, pgs.fta,
+               pgs.oreb, pgs.dreb, pgs.reb, pgs.ast, pgs.stl, pgs.blk,
+               pgs.tov, pgs.pf, pgs.plus_minus,
+               pga.ts_pct, pga.efg_pct, pga.usg_pct, pga.ast_pct, pga.reb_pct,
+               pga.off_rating, pga.def_rating, pga.net_rating, pga.pie,
+               r.game_score
+        FROM player_game_stats pgs
+        JOIN players p USING (player_id)
+        LEFT JOIN player_game_advanced pga
+               ON pga.game_id = pgs.game_id AND pga.player_id = pgs.player_id
+        LEFT JOIN mv_player_game_rates r
+               ON r.game_id = pgs.game_id AND r.player_id = pgs.player_id
+        WHERE pgs.game_id = :gid
+        ORDER BY pgs.team_id, pgs.seconds_played DESC
+    """)
+    filas = session.execute(sql, {"gid": game_id}).mappings()
+
+    salida = []
+    for f in filas:
+        d = dict(f)
+        d["minutes"] = format_seconds(d.pop("seconds_played") or 0)
+        salida.append(d)
+    return salida

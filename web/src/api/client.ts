@@ -1,5 +1,5 @@
 import type {
-  Catalog, HeadToHead, LeadersResponse, Player, PlayerRanks,
+  Catalog, GameDetail, HeadToHead, LeadersResponse, Player, PlayerRanks,
   PlayerSearchResult, PlayerSeason, RecentGame, SplitsResponse,
   Standing, Team, TeamGame, TeamSplits, TeamSummary, TeamTrend, Trend,
 } from './types'
@@ -61,4 +61,9 @@ export const api = {
       dimension, stat, ...(seasons?.length ? { seasons: seasons.join(',') } : {}),
     }),
   teamCatalog: () => get<{ stats: { value: string; label: string }[] }>('/team-catalog'),
+
+  // --- Partido ---
+  // El id va como TEXTO: lleva ceros a la izquierda y codifica el tipo de
+  // partido en la tercera posición.
+  game: (gameId: string) => get<GameDetail>(`/games/${gameId}`),
 }

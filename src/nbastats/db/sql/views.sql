@@ -155,7 +155,15 @@ SELECT
 
     (SUM(pts) / NULLIF(2 * (SUM(fga) + 0.44 * SUM(fta)), 0))::numeric(6,4) AS ts_pct,
     ((SUM(fgm) + 0.5 * SUM(fg3m)) / NULLIF(SUM(fga), 0))::numeric(6,4)     AS efg_pct,
+    (SUM(fgm)::numeric / NULLIF(SUM(fga), 0))::numeric(6,4)                AS fg_pct,
     (SUM(fg3m)::numeric / NULLIF(SUM(fg3a), 0))::numeric(6,4)              AS fg3_pct,
+    (SUM(ftm)::numeric / NULLIF(SUM(fta), 0))::numeric(6,4)                AS ft_pct,
+
+    -- Intentos de triple por partido: distingue al tirador de volumen del
+    -- eficiente con pocos tiros. Un 45% con 2 intentos y un 38% con 10 no son
+    -- la misma habilidad, y el porcentaje solo no lo dice.
+    (SUM(fg3a)::numeric / NULLIF(COUNT(*), 0))::numeric(5,2)               AS fg3a_per_game,
+    (SUM(fg3m)::numeric / NULLIF(COUNT(*), 0))::numeric(5,2)               AS fg3m_per_game,
 
     AVG(game_score)::numeric(6,2) AS avg_game_score,
     SUM(plus_minus)               AS plus_minus

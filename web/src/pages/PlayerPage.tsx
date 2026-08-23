@@ -122,7 +122,16 @@ export function PlayerPage() {
                   <th className="py-2 pr-3 text-right font-medium">PTS</th>
                   <th className="py-2 pr-3 text-right font-medium">REB</th>
                   <th className="py-2 pr-3 text-right font-medium">AST</th>
-                  <th className="py-2 pr-3 text-right font-medium">PTS/36</th>
+                  <th className="py-2 pr-3 text-right font-medium">ROB</th>
+                  <th className="py-2 pr-3 text-right font-medium">TAP</th>
+                  <th className="py-2 pr-3 text-right font-medium">PER</th>
+                  <th className="py-2 pr-3 text-right font-medium">TC%</th>
+                  {/* Los triples con volumen Y porcentaje: un 45% con 2
+                      intentos por partido y un 38% con 10 no son la misma
+                      habilidad, y el porcentaje solo no lo distingue. */}
+                  <th className="py-2 pr-3 text-right font-medium">3P</th>
+                  <th className="py-2 pr-3 text-right font-medium">3P%</th>
+                  <th className="py-2 pr-3 text-right font-medium">TL%</th>
                   <th className="py-2 pr-3 text-right font-medium">TS%</th>
                 </tr>
               </thead>
@@ -143,7 +152,26 @@ export function PlayerPage() {
                     </td>
                     <td className="tabular py-2 pr-3 text-right">{fmt(t.reb_per_game, 1)}</td>
                     <td className="tabular py-2 pr-3 text-right">{fmt(t.ast_per_game, 1)}</td>
-                    <td className="tabular py-2 pr-3 text-right">{fmt(t.pts_per_36, 1)}</td>
+                    <td className="tabular py-2 pr-3 text-right">
+                      {fmt((t.stl ?? 0) / (t.games_played || 1), 1)}
+                    </td>
+                    <td className="tabular py-2 pr-3 text-right">
+                      {fmt((t.blk ?? 0) / (t.games_played || 1), 1)}
+                    </td>
+                    <td className="tabular py-2 pr-3 text-right">
+                      {fmt((t.tov ?? 0) / (t.games_played || 1), 1)}
+                    </td>
+                    <td className="tabular py-2 pr-3 text-right">{fmtPct(t.fg_pct)}</td>
+                    <td
+                      className="tabular py-2 pr-3 text-right whitespace-nowrap"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      {fmt(t.fg3m_per_game, 1)}/{fmt(t.fg3a_per_game, 1)}
+                    </td>
+                    <td className="tabular py-2 pr-3 text-right font-medium">
+                      {fmtPct(t.fg3_pct)}
+                    </td>
+                    <td className="tabular py-2 pr-3 text-right">{fmtPct(t.ft_pct)}</td>
                     <td className="tabular py-2 pr-3 text-right">{fmtPct(t.ts_pct)}</td>
                   </tr>
                 ))}

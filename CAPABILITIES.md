@@ -74,6 +74,17 @@ que lo que distingue no son los minutos sino cuántas posesiones caben dentro.
 posiciones oficiales con los desempates de la NBA ya aplicados, récords
 desglosados y historial entre dos equipos cualesquiera.
 
+**Ficha completa de un partido**
+box score de los dos equipos y de todos los jugadores, tradicional y avanzado:
+minutos al segundo, tiros de campo, triples y libres con aciertos e intentos,
+rebotes ofensivos y defensivos, +/-, TS%, eFG%, USG%, AST%, REB%, ratings, PIE
+y Game Score. Más el contexto del partido: días de descanso de cada equipo,
+prórrogas, ritmo y posesiones.
+
+**Historial de un equipo con filtros**
+por localía, resultado, tipo de partido, rival y descanso, con el récord y el
+diferencial del subconjunto recalculados. Cada partido enlaza a su ficha.
+
 ---
 
 ## 2. Límite A — estructural: lo que NO se puede preguntar

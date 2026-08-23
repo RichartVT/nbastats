@@ -28,8 +28,16 @@ export function RecentGames({ games }: { games: RecentGame[] }) {
           {games.map((g) => (
             <tr key={g.game_id} style={{ borderTop: '1px solid var(--border)' }}>
               <td className="whitespace-nowrap py-2 pr-3">
-                <div>{fmtDate(g.date)}</div>
-                <GameTypeBadge type={g.game_type} />
+                <Link
+                  to={`/partido/${g.game_id}`}
+                  className="hover:underline"
+                  style={{ color: 'var(--series-1)' }}
+                >
+                  {fmtDate(g.date)}
+                </Link>
+                <div>
+                  <GameTypeBadge type={g.game_type} />
+                </div>
               </td>
               <td className="py-2 pr-3">
                 <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
@@ -47,10 +55,12 @@ export function RecentGames({ games }: { games: RecentGame[] }) {
                 </span>
               </td>
               <td className="whitespace-nowrap py-2 pr-3">
-                <WinLoss won={g.won} />{' '}
-                <span className="tabular" style={{ color: 'var(--text-secondary)' }}>
-                  {g.team_pts}-{g.opp_pts}
-                </span>
+                <Link to={`/partido/${g.game_id}`} className="hover:underline">
+                  <WinLoss won={g.won} />{' '}
+                  <span className="tabular" style={{ color: 'var(--text-secondary)' }}>
+                    {g.team_pts}-{g.opp_pts}
+                  </span>
+                </Link>
               </td>
               <td className="tabular py-2 pr-3 text-right">{g.minutes}</td>
               <td className="tabular py-2 pr-3 text-right font-medium">{g.pts}</td>
@@ -78,7 +88,8 @@ export function RecentGames({ games }: { games: RecentGame[] }) {
       </table>
       <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
         Incluye playoffs, play-in y NBA Cup: son los últimos partidos que jugó,
-        no solo los de temporada regular.
+        no solo los de temporada regular. Haz clic en la fecha o el resultado
+        para ver el partido completo.
       </p>
     </div>
   )
