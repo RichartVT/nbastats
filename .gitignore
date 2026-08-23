@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Entorno
+.env
+
+# Datos — nunca versionar el dataset ni los volcados
+data/raw/
+data/processed/
+*.duckdb
+*.sqlite
+*.parquet
+*.csv
+
+# Node / frontend
+node_modules/
+web/dist/
+web/.vite/
+
+# macOS
+.DS_Store
+
+# Configuración personal de Claude Code (settings.json sí se versiona)
+.claude/settings.local.json

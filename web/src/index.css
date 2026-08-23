@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Tokens de diseño.
+   La paleta categórica está validada con el verificador de accesibilidad:
+   banda de luminosidad, suelo de croma, separación para daltonismo (peor par
+   adyacente ΔE 9.1 claro / 8.4 oscuro) y contraste. Los valores oscuros son
+   pasos elegidos para la superficie oscura, no un volteo automático.
+
+   Tres slots del modo claro quedan por debajo de 3:1 sobre la superficie, así
+   que rige la regla de relieve: etiquetas directas visibles y vista de tabla.
+   ========================================================================== */
+:root {
+  color-scheme: light;
+
+  --surface-1:      #fcfcfb;   /* superficie de gráfico */
+  --surface-page:   #f9f9f7;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #898781;   /* ejes y etiquetas */
+  --gridline:       #e1e0d9;
+  --axis:           #c3c2b7;
+  --border:         rgba(11, 11, 11, 0.10);
+
+  --series-1: #2a78d6;   /* azul */
+  --series-2: #eb6834;   /* naranja */
+  --series-3: #1baf7a;   /* aqua */
+  --series-4: #eda100;   /* amarillo */
+
+  /* Estado. Nunca se reutilizan como color de serie y siempre viajan con
+     icono o etiqueta: dos de ellos no llegan a 3:1 en claro por diseño. */
+  --status-good:     #0ca30c;
+  --status-warning:  #fab219;
+  --status-serious:  #ec835a;
+  --status-critical: #d03b3b;
+
+  /* Gris de des-énfasis: lo que el análisis considera ruido se pinta con esto.
+     Es la decisión visual central del proyecto — un resultado no distinguible
+     del azar no merece color. */
+  --muted-mark: #b4b2ab;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --surface-page:   #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --axis:           #383835;
+    --border:         rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --muted-mark: #56554f;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1:      #1a1a19;
+  --surface-page:   #0d0d0d;
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #898781;
+  --gridline:       #2c2c2a;
+  --axis:           #383835;
+  --border:         rgba(255, 255, 255, 0.10);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --muted-mark: #56554f;
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular solo donde las cifras se alinean en columna. Nunca en una cifra
+   grande y suelta: los dígitos de ancho fijo hacen que "121" se vea flojo. */
+.tabular { font-variant-numeric: tabular-nums; }
