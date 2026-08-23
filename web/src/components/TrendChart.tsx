@@ -2,7 +2,7 @@ import {
   CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer,
   Scatter, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import type { Trend } from '../api/types'
+import type { TrendBase } from '../api/types'
 import { fmtDate, fmtStat, isPctStat } from '../lib/format'
 
 /**
@@ -18,7 +18,7 @@ import { fmtDate, fmtStat, isPctStat } from '../lib/format'
  * suavizada autocorrelaciona los puntos y hunde el p-valor: con ruido puro,
  * esa vía declara "tendencia" tres veces más a menudo que la correcta.
  */
-export function TrendChart({ trend }: { trend: Trend }) {
+export function TrendChart({ trend }: { trend: TrendBase }) {
   const esPct = isPctStat(trend.stat)
   const escala = esPct ? 100 : 1
 

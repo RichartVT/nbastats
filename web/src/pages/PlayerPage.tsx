@@ -2,21 +2,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { TrendDirection } from '../api/types'
+import { SplitsCard, TrendCard } from '../components/AnalysisSection'
 import { Card, ErrorBox, Loading, Select } from '../components/Layout'
 import { PlayerHeader, SeasonTiles } from '../components/PlayerHeader'
 import { RecentGames } from '../components/RecentGames'
-import { NoiseWarning, ReliabilityBadge } from '../components/Reliability'
-import { SplitsChart, SplitsTable } from '../components/SplitsChart'
-import { TrendChart } from '../components/TrendChart'
-import { fmt, fmtPct, fmtSigned } from '../lib/format'
-
-const DIRECCION: Record<TrendDirection, { texto: string; color: string; icono: string }> = {
-  alza: { texto: 'Al alza', color: 'var(--status-good)', icono: '▲' },
-  declive: { texto: 'En declive', color: 'var(--status-critical)', icono: '▼' },
-  estable: { texto: 'Estable', color: 'var(--text-secondary)', icono: '=' },
-  indeterminada: { texto: 'Sin datos suficientes', color: 'var(--text-muted)', icono: '·' },
-}
+import { fmt, fmtPct } from '../lib/format'
 
 /**
  * Ficha de jugador.
@@ -33,7 +23,6 @@ export function PlayerPage() {
 
   const [stat, setStat] = useState('pts_per_36')
   const [dimension, setDimension] = useState('home_away')
-  const [verTabla, setVerTabla] = useState(false)
 
   const catalogo = useQuery({ queryKey: ['catalog'], queryFn: api.catalog })
   const jugador = useQuery({
@@ -99,9 +88,9 @@ export function PlayerPage() {
       {ultimaTemporada && ranks.isFetched && !ranks.data && (
         <Card title={`Temporada regular ${ultimaTemporada}`}>
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            No alcanza el mínimo de 20 partidos y 15 minutos por partido para entrar
-            en el ranking de la liga. Compararlo con los titulares no daría un
-            número interpretable.
+            No alcanza el mínimo de 58 partidos que exige la NBA para entrar en el
+            ranking de la liga. Compararlo con los titulares no daría un número
+            interpretable.
           </p>
         </Card>
       )}
@@ -171,128 +160,8 @@ export function PlayerPage() {
         <Select label="Split por" value={dimension} onChange={setDimension} options={opcionesDim} />
       </div>
 
-      {/* 5. Trayectoria */}
-      <Card
-        title="Trayectoria"
-        subtitle={tendencia.data?.stat_label}
-        right={
-          tendencia.data && (
-            <div className="flex items-center gap-3">
-              <span
-                className="inline-flex items-center gap-1.5 text-sm font-semibold"
-                style={{ color: DIRECCION[tendencia.data.direction].color }}
-              >
-                <span aria-hidden>{DIRECCION[tendencia.data.direction].icono}</span>
-                {DIRECCION[tendencia.data.direction].texto}
-              </span>
-              <ReliabilityBadge reliability={tendencia.data.reliability} n={tendencia.data.n} />
-            </div>
-          )
-        }
-      >
-        {tendencia.error ? (
-          <ErrorBox error={tendencia.error} />
-        ) : !tendencia.data ? (
-          <Loading />
-        ) : (
-          <div className="space-y-4">
-            <TrendChart trend={tendencia.data} />
-            {tendencia.data.direction !== 'indeterminada' && (
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Metrica
-                  etiqueta="Cambio por temporada"
-                  valor={fmtSigned(tendencia.data.slope_per_season)}
-                  detalle={`IC95 ${fmtSigned(tendencia.data.ci95_low)} a ${fmtSigned(
-                    tendencia.data.ci95_high,
-                  )}`}
-                />
-                <Metrica
-                  etiqueta="Tau de Kendall"
-                  valor={fmt(tendencia.data.tau)}
-                  detalle="Fuerza de la tendencia (−1 a 1)"
-                />
-                <Metrica
-                  etiqueta="Varianza explicada"
-                  valor={fmtPct(tendencia.data.r_squared)}
-                  detalle="Cuánto del rendimiento explica el paso del tiempo"
-                />
-              </div>
-            )}
-            <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-              {tendencia.data.note}
-            </p>
-          </div>
-        )}
-      </Card>
-
-      {/* 6. Splits — sección secundaria */}
-      <Card
-        title={`Rendimiento por ${splits.data?.dimension_label?.toLowerCase() ?? '…'}`}
-        subtitle={
-          splits.data
-            ? `${splits.data.stat_label} · ${splits.data.total_games} partidos`
-            : undefined
-        }
-        right={
-          <button
-            onClick={() => setVerTabla((v) => !v)}
-            className="rounded-md px-2.5 py-1.5 text-xs"
-            style={{
-              background: 'var(--surface-1)',
-              color: 'var(--text-secondary)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            {verTabla ? 'Ver gráfico' : 'Ver tabla'}
-          </button>
-        }
-      >
-        {splits.error ? (
-          <ErrorBox error={splits.error} />
-        ) : !splits.data ? (
-          <Loading />
-        ) : (
-          <div className="space-y-4">
-            {!splits.data.any_distinguishable && (
-              <NoiseWarning>
-                <strong>No hay ningún patrón aquí.</strong> Las diferencias entre
-                niveles son las que cabría esperar del azar. Los valores mostrados
-                están ajustados hacia el promedio general del jugador, que es la
-                estimación honesta cuando la muestra no da para más.
-              </NoiseWarning>
-            )}
-            {verTabla ? <SplitsTable data={splits.data} /> : <SplitsChart data={splits.data} />}
-            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              {splits.data.caveat}
-            </p>
-          </div>
-        )}
-      </Card>
-    </div>
-  )
-}
-
-function Metrica({
-  etiqueta,
-  valor,
-  detalle,
-}: {
-  etiqueta: string
-  valor: string
-  detalle: string
-}) {
-  return (
-    <div
-      className="rounded-lg px-3.5 py-3"
-      style={{ background: 'var(--surface-page)', border: '1px solid var(--border)' }}
-    >
-      <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-        {etiqueta}
-      </div>
-      <div className="mt-0.5 text-xl font-semibold">{valor}</div>
-      <div className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
-        {detalle}
-      </div>
+      <TrendCard trend={tendencia.data} error={tendencia.error} />
+      <SplitsCard splits={splits.data} error={splits.error} />
     </div>
   )
 }

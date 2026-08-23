@@ -2,7 +2,7 @@ import {
   CartesianGrid, ErrorBar, ReferenceLine, ResponsiveContainer,
   Scatter, ScatterChart, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import type { SplitsResponse } from '../api/types'
+import type { SplitsBase } from '../api/types'
 import { fmtStat, isPctStat } from '../lib/format'
 
 /**
@@ -21,7 +21,7 @@ import { fmtStat, isPctStat } from '../lib/format'
  * información que el eje ya da, y haría que los 7 parecieran igual de reales.
  * Aquí el color codifica otra cosa: azul = se distingue del azar, gris = no.
  */
-export function SplitsChart({ data }: { data: SplitsResponse }) {
+export function SplitsChart({ data }: { data: SplitsBase }) {
   const esPct = isPctStat(data.stat)
   const escala = esPct ? 100 : 1
 
@@ -101,7 +101,9 @@ export function SplitsChart({ data }: { data: SplitsResponse }) {
             stroke="var(--text-muted)"
             strokeWidth={1.5}
             label={{
-              value: 'su promedio',
+              // Neutro a propósito: el mismo gráfico sirve para un jugador y
+              // para un equipo.
+              value: 'promedio general',
               position: 'top',
               fill: 'var(--text-muted)',
               fontSize: 11,
@@ -131,6 +133,12 @@ export function SplitsChart({ data }: { data: SplitsResponse }) {
 
           <Scatter
             data={puntos}
+            // Sin animación de entrada. Recharts hace crecer los bigotes desde
+            // `scaleX(0)` durante 400 ms, y eso tiene dos problemas: un
+            // intervalo de confianza que se expande se lee como si el dato
+            // estuviera cambiando, y cualquier captura tomada antes de que
+            // termine sale sin bigotes — que es exactamente como se descubrió.
+            isAnimationActive={false}
             shape={(props: any) => {
               const { cx, cy, payload } = props
               const real = payload.distinguishable
@@ -183,7 +191,7 @@ export function SplitsChart({ data }: { data: SplitsResponse }) {
 
 /** Vista de tabla: el gemelo accesible del gráfico. Todo valor debe ser
  *  alcanzable sin depender del color ni del hover. */
-export function SplitsTable({ data }: { data: SplitsResponse }) {
+export function SplitsTable({ data }: { data: SplitsBase }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">

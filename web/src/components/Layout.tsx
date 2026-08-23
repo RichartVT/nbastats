@@ -4,6 +4,7 @@ const enlaces = [
   { to: '/', label: 'Jugadores', end: true },
   { to: '/equipos', label: 'Equipos' },
   { to: '/clasificacion', label: 'Clasificación' },
+  { to: '/comparar', label: 'Comparar' },
   { to: '/tendencias', label: 'Al alza y en declive' },
 ]
 

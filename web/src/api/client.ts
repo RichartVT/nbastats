@@ -1,7 +1,7 @@
 import type {
   Catalog, HeadToHead, LeadersResponse, Player, PlayerRanks,
   PlayerSearchResult, PlayerSeason, RecentGame, SplitsResponse,
-  Standing, Team, TeamGame, TeamSummary, Trend,
+  Standing, Team, TeamGame, TeamSplits, TeamSummary, TeamTrend, Trend,
 } from './types'
 
 const BASE = '/api'
@@ -52,9 +52,13 @@ export const api = {
   standings: (season?: string) =>
     get<Standing[]>('/standings', season ? { season } : {}),
   headToHead: (a: number, b: number) => get<HeadToHead>(`/teams/${a}/vs/${b}`),
-  teamTrend: (id: number, stat: string) =>
-    get<Record<string, unknown>>(`/teams/${id}/trend`, { stat }),
-  teamSplits: (id: number, dimension: string, stat: string) =>
-    get<Record<string, unknown>>(`/teams/${id}/splits`, { dimension, stat }),
+  teamTrend: (id: number, stat: string, seasons?: string[]) =>
+    get<TeamTrend>(`/teams/${id}/trend`, {
+      stat, ...(seasons?.length ? { seasons: seasons.join(',') } : {}),
+    }),
+  teamSplits: (id: number, dimension: string, stat: string, seasons?: string[]) =>
+    get<TeamSplits>(`/teams/${id}/splits`, {
+      dimension, stat, ...(seasons?.length ? { seasons: seasons.join(',') } : {}),
+    }),
   teamCatalog: () => get<{ stats: { value: string; label: string }[] }>('/team-catalog'),
 }

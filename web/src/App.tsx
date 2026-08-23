@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { ComparePage } from './pages/ComparePage'
 import { LeadersPage } from './pages/LeadersPage'
 import { PlayerPage } from './pages/PlayerPage'
 import { SearchPage } from './pages/SearchPage'
@@ -31,6 +32,7 @@ export default function App() {
             <Route path="/equipos" element={<TeamsPage />} />
             <Route path="/equipo/:id" element={<TeamPage />} />
             <Route path="/clasificacion" element={<StandingsPage />} />
+            <Route path="/comparar" element={<ComparePage />} />
             <Route path="/tendencias" element={<LeadersPage />} />
           </Route>
         </Routes>

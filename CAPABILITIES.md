@@ -179,6 +179,28 @@ la liga). **No está implementado.** Hasta que lo esté, la curva sirve para
 explorar la forma, no para afirmar cuánto declive es "normal" a una edad dada
 — y por eso ningún endpoint la expone todavía.
 
+### Los splits de equipo necesitan varias temporadas
+
+Un equipo juega 41 partidos en casa por temporada. Con esa muestra **ni siquiera
+la ventaja de campo** —un efecto real, conocido y medido— alcanza significación.
+Comprobado con OKC y su rating neto:
+
+```
+Solo 2025-26 (n≈41):   local 11,50   visitante 10,79   q=0,84  -> ruido
+Las 5 temporadas (n≈205): local  7,52  visitante  1,90  q=0,0007 -> REAL
+```
+
+Y el contraste de cordura sobre los 30 equipos y las 5 temporadas: **+1,93 en
+casa contra −1,93 fuera**, que es la ventaja de campo que documenta la
+literatura. El sistema no dice "sin patrón" por defecto — se niega a afirmarlo
+cuando no hay potencia, y lo detecta cuando la hay.
+
+Por eso el análisis de equipo abarca las 5 temporadas por defecto, con un
+selector para acotarlo. La contrapartida es la de siempre: juntar cinco
+temporadas mezcla plantillas distintas, así que "¿cómo juega este equipo?" y
+"¿cómo juega esta franquicia?" son preguntas distintas y el selector obliga a
+elegir cuál se está haciendo.
+
 ### Otras preguntas frágiles por el mismo motivo
 
 - "¿Cómo rinde contra [un rival concreto]?" — n≈15 en cinco temporadas, y además

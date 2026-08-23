@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
+import { SplitsCard, TrendCard } from '../components/AnalysisSection'
 import { Card, ErrorBox, Loading, Select } from '../components/Layout'
 import { GameTypeBadge, PlayerPhoto, TeamLogo, WinLoss } from '../components/Media'
 import { fmt, fmtDate, fmtSigned } from '../lib/format'
@@ -24,6 +25,42 @@ export function TeamPage() {
   const { id } = useParams()
   const teamId = Number(id)
   const [season, setSeason] = useState(TEMPORADAS[0])
+  const [stat, setStat] = useState('net_rating')
+  const [dimension, setDimension] = useState('home_away')
+
+  // El análisis tiene su PROPIO alcance, separado del de la plantilla y el
+  // calendario, y por defecto abarca las 5 temporadas.
+  //
+  // El motivo salió de los datos: con una sola temporada (41 partidos en casa)
+  // ni siquiera la ventaja de campo —un efecto real y bien documentado— alcanza
+  // significación. OKC en 2025-26 daba 11,50 en casa y 10,79 fuera, indistinguible
+  // del azar; con las cinco temporadas da 7,52 contra 1,90, y sí lo es (q=0,0007).
+  // Dejar el análisis atado a una temporada habría hecho que la pantalla
+  // respondiera "aquí no hay patrón" a casi todo, por falta de datos y no por
+  // ausencia de efecto.
+  //
+  // A cambio, juntar cinco temporadas mezcla plantillas distintas. Por eso es un
+  // selector y no una constante: la pregunta "¿cómo juega ESTE equipo?" y "¿cómo
+  // juega esta franquicia?" no son la misma.
+  const [alcance, setAlcance] = useState<'todas' | 'temporada'>('todas')
+  const temporadasAnalisis = alcance === 'todas' ? undefined : [season]
+
+  const catalogoEquipo = useQuery({
+    queryKey: ['teamCatalog'],
+    queryFn: api.teamCatalog,
+  })
+  const catalogo = useQuery({ queryKey: ['catalog'], queryFn: api.catalog })
+
+  const tendencia = useQuery({
+    queryKey: ['teamTrend', teamId, stat, alcance, season],
+    queryFn: () => api.teamTrend(teamId, stat, temporadasAnalisis),
+    placeholderData: (prev) => prev,
+  })
+  const splits = useQuery({
+    queryKey: ['teamSplits', teamId, dimension, stat, alcance, season],
+    queryFn: () => api.teamSplits(teamId, dimension, stat, temporadasAnalisis),
+    placeholderData: (prev) => prev,
+  })
 
   const equipo = useQuery({
     queryKey: ['team', teamId, season],
@@ -233,6 +270,59 @@ export function TeamPage() {
           </div>
         )}
       </Card>
+
+      {/* --- Análisis del equipo --- */}
+      <div className="flex flex-wrap items-center gap-4 pt-2">
+        <h2 className="text-sm font-semibold">Análisis</h2>
+        <Select
+          label="Estadística"
+          value={stat}
+          onChange={setStat}
+          options={(catalogoEquipo.data?.stats ?? []).map((x) => ({
+            value: x.value,
+            label: x.label,
+          }))}
+        />
+        <Select
+          label="Split por"
+          value={dimension}
+          onChange={setDimension}
+          options={(catalogo.data?.dimensions ?? []).map((d) => ({
+            value: d.value,
+            label: d.label,
+          }))}
+        />
+        <Select
+          label="Alcance"
+          value={alcance}
+          onChange={(v) => setAlcance(v as 'todas' | 'temporada')}
+          options={[
+            { value: 'todas', label: 'Las 5 temporadas' },
+            { value: 'temporada', label: `Solo ${season}` },
+          ]}
+        />
+      </div>
+
+      <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+        Las métricas de equipo van normalizadas por <strong>100 posesiones</strong>,
+        no por minutos: un equipo siempre juega 48, así que lo que distingue a uno
+        de otro no son los minutos sino cuántas posesiones caben dentro. Comparar
+        puntos por partido entre épocas mezcla «anota mejor» con «juega más rápido».
+        {alcance === 'temporada' && (
+          <>
+            {' '}Con una sola temporada hay ~41 partidos por split: ni siquiera la
+            ventaja de campo alcanza significación con esa muestra. Si todo sale como
+            «sin patrón», prueba con las 5 temporadas.
+          </>
+        )}
+      </p>
+
+      <TrendCard
+        trend={tendencia.data}
+        error={tendencia.error}
+        titulo={alcance === 'todas' ? 'Trayectoria' : `Trayectoria en ${season}`}
+      />
+      <SplitsCard splits={splits.data} error={splits.error} />
     </div>
   )
 }

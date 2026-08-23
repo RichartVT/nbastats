@@ -236,23 +236,21 @@ export interface Split {
   note: string
 }
 
-export interface SplitsResponse {
+export interface SplitsResponse extends SplitsBase {
   player_id: number
   player_name: string
-  stat: string
-  stat_label: string
-  dimension: string
-  dimension_label: string
   seasons: string[]
-  total_games: number
-  splits: Split[]
-  caveat: string
-  any_distinguishable: boolean
 }
 
-export interface Trend {
-  player_id: number
-  player_name: string
+/**
+ * Lo que un gráfico de tendencia necesita, sin saber de quién es.
+ *
+ * Jugadores y equipos comparten forma a propósito: es lo que permite que
+ * `TrendChart` sirva a los dos sin ramificar, igual que en el backend
+ * `analyze_trend` no sabe si los números vienen de una persona o de una
+ * franquicia.
+ */
+export interface TrendBase {
   stat: string
   stat_label: string
   n: number
@@ -269,6 +267,33 @@ export interface Trend {
   series: number[]
   rolling: (number | null)[]
   dates: string[]
+}
+
+export interface Trend extends TrendBase {
+  player_id: number
+  player_name: string
+}
+
+export interface TeamTrend extends TrendBase {
+  team_id: number
+  team_name: string
+}
+
+/** Igual que TrendBase, para los splits. */
+export interface SplitsBase {
+  stat: string
+  stat_label: string
+  dimension: string
+  dimension_label: string
+  total_games: number
+  splits: Split[]
+  caveat: string
+  any_distinguishable: boolean
+}
+
+export interface TeamSplits extends SplitsBase {
+  team_id: number
+  team_name: string
 }
 
 export interface Leader {
