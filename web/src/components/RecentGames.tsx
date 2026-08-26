@@ -21,6 +21,7 @@ export function RecentGames({ games }: { games: RecentGame[] }) {
             <th className="py-2 pr-3 text-right font-medium">REB</th>
             <th className="py-2 pr-3 text-right font-medium">AST</th>
             <th className="py-2 pr-3 text-right font-medium">TC</th>
+            <th className="py-2 pr-3 text-right font-medium">3P</th>
             <th className="py-2 pr-3 text-right font-medium">+/-</th>
           </tr>
         </thead>
@@ -68,6 +69,11 @@ export function RecentGames({ games }: { games: RecentGame[] }) {
               <td className="tabular py-2 pr-3 text-right">{g.ast}</td>
               <td className="tabular py-2 pr-3 text-right" style={{ color: 'var(--text-secondary)' }}>
                 {g.fgm}/{g.fga}
+              </td>
+              {/* Anotados/intentados, no el porcentaje: con 5 intentos un
+                  porcentaje es ruido, y el volumen es dato por sí mismo. */}
+              <td className="tabular py-2 pr-3 text-right" style={{ color: 'var(--text-secondary)' }}>
+                {g.fg3m ?? '—'}/{g.fg3a ?? '—'}
               </td>
               <td
                 className="tabular py-2 pr-3 text-right"

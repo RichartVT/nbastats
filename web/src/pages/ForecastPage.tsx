@@ -4,8 +4,8 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { CalibrationBin, TeamRating } from '../api/types'
 import { Card, ErrorBox, Loading, Select } from '../components/Layout'
-import { TeamLogo } from '../components/Media'
-import { fmt, fmtSigned } from '../lib/format'
+import { GameTypeBadge, TeamLogo } from '../components/Media'
+import { fmt, fmtDate, fmtSigned } from '../lib/format'
 
 const pct = (v: number) => `${(100 * v).toFixed(1)}%`
 
@@ -34,6 +34,178 @@ function BarraDivergente({ valor, max, color }: { valor: number; max: number; co
         style={{ left: '50%', width: 1, background: 'var(--border)' }}
       />
     </span>
+  )
+}
+
+/**
+ * Selector de equipo con escudo.
+ *
+ * Un `<select>` nativo no puede pintar imágenes —solo texto—, así que hace
+ * falta un desplegable propio. Se mantiene navegable con teclado y se cierra al
+ * pinchar fuera mediante un fondo transparente, que evita tener que escuchar
+ * clics en todo el documento.
+ */
+function SelectorEquipo({
+  label,
+  value,
+  onChange,
+  teams,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  teams: TeamRating[]
+}) {
+  const [abierto, setAbierto] = useState(false)
+  const elegido = teams.find((t) => String(t.team_id) === value)
+
+  return (
+    <div className="relative">
+      <span className="mb-1 block text-xs" style={{ color: 'var(--text-secondary)' }}>
+        {label}
+      </span>
+      <button
+        type="button"
+        onClick={() => setAbierto((v) => !v)}
+        className="flex w-56 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm"
+        style={{
+          background: 'var(--surface-1)',
+          border: '1px solid var(--border)',
+          color: 'var(--text-primary)',
+        }}
+      >
+        {elegido ? (
+          <>
+            <TeamLogo teamId={elegido.team_id} name={elegido.full_name} size={22} />
+            <span className="truncate">{elegido.full_name}</span>
+          </>
+        ) : (
+          <span style={{ color: 'var(--text-muted)' }}>Elegir equipo…</span>
+        )}
+        <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>
+          ▾
+        </span>
+      </button>
+
+      {abierto && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setAbierto(false)} />
+          <ul
+            className="absolute z-20 mt-1 max-h-72 w-56 overflow-y-auto rounded-md py-1 text-sm shadow-lg"
+            style={{ background: 'var(--surface-1)', border: '1px solid var(--border)' }}
+          >
+            {[...teams]
+              .sort((a, b) => a.full_name.localeCompare(b.full_name))
+              .map((t) => (
+                <li key={t.team_id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(String(t.team_id))
+                      setAbierto(false)
+                    }}
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:opacity-80"
+                    style={{
+                      background:
+                        String(t.team_id) === value ? 'var(--surface-2)' : 'transparent',
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    <TeamLogo teamId={t.team_id} name={t.full_name} size={20} />
+                    <span className="truncate">{t.full_name}</span>
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Historial completo entre dos equipos, con enlace al desglose de cada uno. */
+function Historial({ a, b }: { a: number; b: number }) {
+  const h2h = useQuery({ queryKey: ['h2h', a, b], queryFn: () => api.headToHead(a, b) })
+  if (!h2h.data) return null
+  const d = h2h.data
+
+  return (
+    <Card
+      title={`${d.team_a.abbreviation} contra ${d.team_b.abbreviation}`}
+      subtitle={`Los ${d.games_played} partidos que han jugado en las temporadas cargadas (${d.seasons.join(', ')}).`}
+    >
+      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+        <span className="flex items-center gap-2">
+          <TeamLogo teamId={d.team_a.team_id} name={d.team_a.full_name} size={24} />
+          <strong className="tabular">{d.team_a_wins}</strong>
+        </span>
+        <span style={{ color: 'var(--text-muted)' }}>—</span>
+        <span className="flex items-center gap-2">
+          <strong className="tabular">{d.team_b_wins}</strong>
+          <TeamLogo teamId={d.team_b.team_id} name={d.team_b.full_name} size={24} />
+        </span>
+        {d.avg_point_diff !== null && (
+          <span style={{ color: 'var(--text-secondary)' }}>
+            margen medio {fmtSigned(d.avg_point_diff, 1)} para {d.team_a.abbreviation}
+          </span>
+        )}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left" style={{ color: 'var(--text-secondary)' }}>
+              <th className="py-2 pr-3 font-medium">Fecha</th>
+              <th className="py-2 pr-3 font-medium">Temp.</th>
+              <th className="py-2 pr-3 font-medium">Sede</th>
+              <th className="py-2 pr-3 font-medium">Resultado</th>
+              <th className="py-2 pr-3 text-right font-medium">Margen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.games.map((g) => (
+              <tr key={g.game_id} style={{ borderTop: '1px solid var(--border)' }}>
+                <td className="whitespace-nowrap py-2 pr-3">
+                  <Link
+                    to={`/partido/${g.game_id}`}
+                    className="hover:underline"
+                    style={{ color: 'var(--series-1)' }}
+                  >
+                    {fmtDate(g.date)}
+                  </Link>
+                </td>
+                <td className="py-2 pr-3" style={{ color: 'var(--text-secondary)' }}>
+                  {g.season_id}
+                  <GameTypeBadge type={g.game_type} />
+                </td>
+                <td className="py-2 pr-3" style={{ color: 'var(--text-secondary)' }}>
+                  {g.is_home ? 'Local' : 'Visitante'}
+                </td>
+                <td className="py-2 pr-3">
+                  <Link to={`/partido/${g.game_id}`} className="hover:underline">
+                    <strong style={{ color: g.won ? 'var(--status-good)' : 'var(--status-critical)' }}>
+                      {g.won ? 'G' : 'P'}
+                    </strong>{' '}
+                    <span className="tabular" style={{ color: 'var(--text-secondary)' }}>
+                      {g.pts}-{g.opp_pts}
+                    </span>
+                  </Link>
+                </td>
+                <td
+                  className="tabular py-2 pr-3 text-right"
+                  style={{
+                    color:
+                      (g.point_diff ?? 0) > 0 ? 'var(--status-good)' : 'var(--status-critical)',
+                  }}
+                >
+                  {fmtSigned(g.point_diff ?? 0, 0)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   )
 }
 
@@ -157,8 +329,18 @@ export function ForecastPage() {
   const [descLocal, setDescLocal] = useState('1')
   const [descVis, setDescVis] = useState('1')
   const [neutral, setNeutral] = useState(false)
-  const [b2bLocal, setB2bLocal] = useState(false)
-  const [b2bVis, setB2bVis] = useState(false)
+
+  // EL BACK-TO-BACK NO ES UNA CASILLA APARTE: ES LO MISMO QUE 0 DÍAS DE
+  // DESCANSO. En los datos se derivan de la misma resta —`rest_days = (fecha −
+  // fecha_anterior) − 1` e `is_back_to_back = (fecha − fecha_anterior) = 1`—,
+  // así que 0 días de descanso ⟺ back-to-back, siempre, sin excepción.
+  //
+  // Tenerlos como controles independientes dejaba pedir estados que no existen
+  // (0 días sin back-to-back, o 3 días CON back-to-back) y el modelo respondía
+  // extrapolando a un sitio donde no se entrenó. Derivarlo elimina el problema
+  // en vez de avisar de él.
+  const b2bLocal = descLocal === '0'
+  const b2bVis = descVis === '0'
 
   const ratings = useQuery({ queryKey: ['ratings'], queryFn: () => api.ratings() })
   const bt = useQuery({ queryKey: ['backtest'], queryFn: () => api.backtest() })
@@ -183,12 +365,6 @@ export function ForecastPage() {
   if (!ratings.data) return <Loading />
 
   const maxNeto = Math.max(...equipos.map((t) => Math.abs(t.net)), 1)
-  const opciones = [
-    { value: '', label: '—' },
-    ...[...equipos]
-      .sort((a, b) => a.full_name.localeCompare(b.full_name))
-      .map((t) => ({ value: String(t.team_id), label: t.full_name })),
-  ]
   const dias = ['0', '1', '2', '3', '4'].map((d) => ({ value: d, label: `${d} días` }))
 
   return (
@@ -206,28 +382,53 @@ export function ForecastPage() {
         subtitle={`Ratings al cierre de ${ratings.data.season}. La localía vale ${fmt(ratings.data.home_advantage_margin, 1)} puntos de margen.`}
       >
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-          <Select label="Local" value={local} onChange={setLocal} options={opciones} />
-          <Select label="Visitante" value={visitante} onChange={setVisitante} options={opciones} />
+          <SelectorEquipo label="Local" value={local} onChange={setLocal} teams={equipos} />
+          <SelectorEquipo
+            label="Visitante"
+            value={visitante}
+            onChange={setVisitante}
+            teams={equipos}
+          />
           <Select label="Descanso local" value={descLocal} onChange={setDescLocal} options={dias} />
           <Select label="Descanso visit." value={descVis} onChange={setDescVis} options={dias} />
           <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
             <input type="checkbox" checked={neutral} onChange={(e) => setNeutral(e.target.checked)} />
             Sede neutral
           </label>
-          {/* Existían en la API desde el principio y no había control: la fila
-              "Segundo partido en 2 días" salía siempre a 0,00. */}
-          <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={b2bLocal} onChange={(e) => setB2bLocal(e.target.checked)} />
-            Local en back-to-back
-          </label>
-          <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
-            <input type="checkbox" checked={b2bVis} onChange={(e) => setB2bVis(e.target.checked)} />
-            Visitante en back-to-back
-          </label>
         </div>
+
+        {(b2bLocal || b2bVis) && (
+          <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+            0 días de descanso <strong>es</strong> un back-to-back, así que se aplica solo:{' '}
+            {[b2bLocal && 'el local', b2bVis && 'el visitante'].filter(Boolean).join(' y ')}{' '}
+            {b2bLocal && b2bVis ? 'juegan' : 'juega'} su segundo partido en dos días.
+          </p>
+        )}
 
         {prediccion.data && (
           <div className="mt-5">
+            <div className="mb-4 flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <TeamLogo
+                  teamId={prediccion.data.home.team_id}
+                  name={prediccion.data.home.abbreviation}
+                  size={44}
+                />
+                <span className="text-sm font-medium">{prediccion.data.home.abbreviation}</span>
+              </div>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {neutral ? 'sede neutral' : 'recibe a'}
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">{prediccion.data.away.abbreviation}</span>
+                <TeamLogo
+                  teamId={prediccion.data.away.team_id}
+                  name={prediccion.data.away.abbreviation}
+                  size={44}
+                />
+              </div>
+            </div>
+
             <div className="flex flex-wrap items-baseline gap-3">
               <span className="text-3xl font-semibold">{pct(prediccion.data.home_win_prob)}</span>
               <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
@@ -280,6 +481,12 @@ export function ForecastPage() {
           </p>
         )}
       </Card>
+
+      {/* Historial completo entre los dos. El endpoint existía desde la fase 8
+          y no tenía pantalla: es el contexto que un porcentaje solo no da. */}
+      {local && visitante && local !== visitante && (
+        <Historial a={Number(local)} b={Number(visitante)} />
+      )}
 
       {/* --- Ratings --- */}
       <Card

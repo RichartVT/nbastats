@@ -44,6 +44,8 @@ class Stat(enum.StrEnum):
     STL_36 = "stl_per_36"
     BLK_36 = "blk_per_36"
     TOV_36 = "tov_per_36"
+    FG3M_36 = "fg3m_per_36"
+    FG3A_36 = "fg3a_per_36"
     TS = "ts_pct"
     EFG = "efg_pct"
     USG = "usg_pct"
@@ -58,6 +60,8 @@ class Stat(enum.StrEnum):
     TOV = "tov"
     PLUS_MINUS = "plus_minus"
     MINUTES = "seconds_played"
+    FG3M = "fg3m"
+    FG3A = "fg3a"
 
 
 STATS: dict[Stat, StatDef] = {
@@ -67,6 +71,10 @@ STATS: dict[Stat, StatDef] = {
     Stat.STL_36: StatDef("stl_per_36", "Robos por 36 min", True),
     Stat.BLK_36: StatDef("blk_per_36", "Tapones por 36 min", True),
     Stat.TOV_36: StatDef("tov_per_36", "Pérdidas por 36 min", True),
+    # El VOLUMEN de triple es decisión, y la decisión se estabiliza mucho antes
+    # que el acierto: por eso va como tasa y no solo como total.
+    Stat.FG3M_36: StatDef("fg3m_per_36", "Triples anotados por 36 min", True),
+    Stat.FG3A_36: StatDef("fg3a_per_36", "Triples intentados por 36 min", True),
     Stat.TS: StatDef("ts_pct", "True Shooting %", True, decimals=3),
     Stat.EFG: StatDef("efg_pct", "Efective FG %", True, decimals=3),
     Stat.USG: StatDef("usg_pct", "Usage %", True, decimals=3),
@@ -78,6 +86,8 @@ STATS: dict[Stat, StatDef] = {
     Stat.BLK: StatDef("blk", "Tapones", False),
     Stat.TOV: StatDef("tov", "Pérdidas", False),
     Stat.PLUS_MINUS: StatDef("plus_minus", "+/-", False),
+    Stat.FG3M: StatDef("fg3m", "Triples anotados", False),
+    Stat.FG3A: StatDef("fg3a", "Triples intentados", False),
     Stat.MINUTES: StatDef("seconds_played", "Minutos (en segundos)", False),
 }
 

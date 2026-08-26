@@ -66,6 +66,11 @@ SELECT
     (pgs.blk  * 2160.0 / NULLIF(pgs.seconds_played, 0))::numeric(7,3) AS blk_per_36,
     (pgs.tov  * 2160.0 / NULLIF(pgs.seconds_played, 0))::numeric(7,3) AS tov_per_36,
     (pgs.fga  * 2160.0 / NULLIF(pgs.seconds_played, 0))::numeric(7,3) AS fga_per_36,
+    -- El triple por 36 minutos separa la DECISIÓN de tirar del acierto, y es de
+    -- lo más estable que tiene un jugador: el volumen se hereda mucho antes que
+    -- el porcentaje.
+    (pgs.fg3m * 2160.0 / NULLIF(pgs.seconds_played, 0))::numeric(7,3) AS fg3m_per_36,
+    (pgs.fg3a * 2160.0 / NULLIF(pgs.seconds_played, 0))::numeric(7,3) AS fg3a_per_36,
 
     -- Eficiencia (de la tabla de avanzadas; LEFT JOIN, puede faltar).
     pga.ts_pct, pga.efg_pct, pga.usg_pct, pga.ast_pct, pga.reb_pct,

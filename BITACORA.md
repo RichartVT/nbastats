@@ -37,7 +37,7 @@ Documentos hermanos:
 | 15 | Probabilidad y calibración | ✅ Completa — calibración dentro del ruido |
 | 16 | Ratings y pronóstico en pantalla | ✅ Completa — `/pronostico` |
 | 17 | Auditoría: el simulador ahora usa el modelo validado | ✅ Completa — coeficientes persistidos |
-| 18 | Prior entre temporadas | ✅ Completa — 4.910 partidos con pronóstico |
+| 18 | Prior entre temporadas + triples, historial y escudos | ✅ Completa — 4.910 partidos con pronóstico |
 
 **Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
@@ -1371,6 +1371,37 @@ que no es vacuo: introduciendo la fuga a propósito —usar los ratings finales 
 la propia temporada como prior— el test falla. Es la única forma de saber que un
 test de fuga sirve, porque la fuga no da error: sube las métricas y las deja
 mintiendo.
+
+---
+
+## Fase 18b — Tres arreglos de pantalla y una inconsistencia real
+
+**El back-to-back no era una casilla aparte.** En la interfaz había dos controles
+independientes, descanso y back-to-back, y se podía pedir "0 días de descanso sin
+back-to-back". Eso no existe: los dos salen de la misma resta en `derive.sql`
+—`rest_days = (fecha − fecha_anterior) − 1` e `is_back_to_back = (fecha −
+fecha_anterior) = 1`—, así que **0 días de descanso ⟺ back-to-back, siempre**.
+La pantalla dejaba pedir combinaciones que el modelo nunca vio y respondía
+extrapolando. Ahora se deriva del descanso y el estado imposible desaparece en
+vez de avisarse.
+
+Que las dos variables sigan en el modelo es correcto y no es redundancia: el
+descanso entra lineal y el back-to-back es el **salto** extra de pasar de 1 día a
+0. Un local en back-to-back contra un visitante con 1 día pierde 0,42 por el
+término lineal y 2,46 más por el salto.
+
+**Triples anotados e intentados**, en el historial de partidos como `3/6` junto a
+tiros de campo, y como estadística analizable: `fg3m_per_36` y `fg3a_per_36` son
+columnas nuevas de `mv_player_game_rates`. El volumen de triple va como tasa a
+propósito — es **decisión**, y la decisión se estabiliza mucho antes que el
+acierto (k=3 partidos, medido en la fase 11).
+
+**Historial completo entre los dos equipos** en el simulador, con enlace al
+desglose de cada partido. El endpoint `/teams/{a}/vs/{b}` existía desde la fase 8
+sin pantalla; es el contexto que un porcentaje solo no da.
+
+**Escudos en el selector.** Un `<select>` nativo solo pinta texto, así que hizo
+falta un desplegable propio.
 
 ---
 
