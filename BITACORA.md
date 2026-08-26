@@ -28,10 +28,20 @@ Documentos hermanos:
 | 6 | Frontend React | ✅ Completa — 3 vistas, 2 gráficos, modo claro y oscuro |
 | 7 | Perfiles de jugador y equipo, datos de plantilla y clasificación | ✅ Completa |
 | 8 | Análisis de equipo y comparador de jugadores | ✅ Completa |
+| 9 | Pantalla de jugadores: filtros, situación, orden encadenado | ✅ Completa |
+| 10 | Por debajo del partido: cuartos y contexto de partido | ✅ Completa |
+| 11 | Equipos: de dónde salen los puntos, récord previo, estabilidad | ✅ Completa |
+| 12 | Play-by-play completo | ✅ Completa — 3.251.908 eventos, 6.602/6.602 |
+| 13 | Motor de resultado esperado | ✅ Completa — con resultado negativo documentado |
+| 14 | Ratings ajustados por rival | ✅ Completa — 65,5 % fuera de muestra |
+| 15 | Probabilidad y calibración | ✅ Completa — calibración dentro del ruido |
+| 16 | Ratings y pronóstico en pantalla | ✅ Completa — `/pronostico` |
+| 17 | Auditoría: el simulador ahora usa el modelo validado | ✅ Completa — coeficientes persistidos |
 
-**Números:** 6.602 partidos · 140.932 filas jugador-partido · 1.030 jugadores
-con biografía completa · 5 temporadas (2021-22 → 2025-26) · 145 tests ·
-7 migraciones · 9 endpoints.
+**Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
+jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
+marcador por periodo · 1.030 jugadores con biografía completa · 5 temporadas
+(2021-22 → 2025-26) · 461 tests · 14 migraciones · **844 MB**.
 
 ---
 
@@ -1161,6 +1171,122 @@ información.
 
 ---
 
+## Fase 17 — El simulador no usaba el modelo que se validó
+
+Una auditoría del proyecto entero encontró un defecto que yo mismo había
+introducido en la fase 16, y que es el peor tipo que hay: **visible, silencioso y
+tapado por un comentario que afirmaba justo lo contrario.**
+
+`/predict` calculaba el margen así:
+
+```python
+descanso = (min(rest_home, 4.0) - min(rest_away, 4.0)) * 0.35
+b2b = ((1.0 if b2b_away else 0.0) - (1.0 if b2b_home else 0.0)) * 1.2
+margen = diff + ventaja + descanso + b2b
+# Mismos coeficientes que el backtest: se leen de una predicción guardada
+# en vez de reajustar, para que la pantalla no pueda discrepar del informe.
+```
+
+El comentario era **falso**. Lo único que se leía de una predicción guardada era
+`margin_sigma`. Los dos multiplicadores estaban escritos a mano, la diferencia de
+rating entraba con coeficiente 1,0 implícito, no había intercepto, y la localía
+venía del ridge de ratings — otra cantidad distinta de `margin_params["home"]`.
+
+**La causa raíz no era la fórmula, era que no había de dónde leer.**
+`build-ratings` ajustaba el `WinModel`, escribía las probabilidades y **tiraba el
+modelo**. Los coeficientes no se persistían en ninguna parte. La fórmula paralela
+no fue un descuido: fue la única salida que quedaba, y por eso el arreglo no es
+corregir los números sino eliminar la posibilidad de que existan dos fórmulas.
+
+### Cuánto erraba
+
+Ajustar y comparar contra lo que había escrito a mano:
+
+| Variable | Ajustado | Literal anterior | Error |
+|---|---|---|---|
+| `rest_diff` | **0,4235** | 0,35 | −17 % |
+| `b2b_diff` | **2,4559** | 1,2 | **−51 %, menos de la mitad** |
+| `rating_diff` | **1,1859** | 1,0 implícito | −16 % |
+| Localía (`const`) | **1,7055** | no existía | — |
+| σ | 13,998 | leída del partido equivocado | — |
+
+En un OKC–LAL con el visitante en back-to-back, la pantalla decía **80,0 %** y el
+modelo validado dice **86,0 %**. Seis puntos porcentuales que no venían de los
+datos sino de dos constantes inventadas.
+
+### Un segundo fallo en la misma función
+
+`sigma = ultima[0]["margin_sigma"]`, pero `get_predictions` ordena por fecha
+**ascendente**: `ultima[0]` era el partido más **antiguo**, o sea la σ del modelo
+con menos entrenamiento. Ha dejado de importar porque σ ahora se lee de
+`model_runs`, que es su sitio.
+
+### El arreglo
+
+- **Tabla `model_runs`** (`model_version`, `season_id`, `logit_params`,
+  `margin_params`, `sigma`, `train_games`, `fitted_at`), escrita por
+  `build-ratings`. Los coeficientes de las dos rutas van en JSONB porque son un
+  diccionario de tamaño variable, no columnas fijas.
+- **`model_from_params()`** en `analysis/forecast.py` reconstruye el `WinModel`.
+  Sigue siendo una función pura: recibe diccionarios, no toca la base.
+- **`/predict` llama a `probability()`**. No queda ninguna aritmética de
+  pronóstico fuera de `forecast.py`.
+- **El desglose sale de `margin_params`**, así que las barras suman el margen
+  esperado **por construcción**, no porque se haya cuadrado a mano. Sin redondear
+  en la respuesta: quien sume los componentes obtiene el margen exacto, y el
+  redondeo es cosa de la pantalla.
+- **Sede neutral** resta `const` y avisa de que es una extrapolación: no hay
+  sedes neutrales en el entrenamiento, y el modelo no puede saber si la localía
+  se anula del todo.
+- **Aviso si las dos rutas discrepan** más de 3 puntos, con las dos visibles en
+  pantalla. El número de portada es su media; si no se ponen de acuerdo, hay que
+  poder verlo.
+- **Los controles de back-to-back existen ahora en la interfaz.** La API los
+  aceptaba desde el primer día y `ForecastPage` no los enviaba nunca, así que la
+  fila "Segundo partido en 2 días" valía **siempre 0,00 en pantalla**. Dos
+  defectos que se tapaban: aunque el usuario hubiera podido marcarlo, habría
+  aplicado el coeficiente equivocado.
+- **La pantalla dice qué modelo respondió** y con cuántos partidos se entrenó.
+
+### El test que lo habría cazado
+
+`tests/test_model_persistence.py`, 7 tests. El importante recorre los partidos
+guardados y exige que reconstruir el modelo desde `model_runs` reproduzca
+`game_predictions.home_win_prob`. Sobre los **3.674 partidos**:
+
+```
+peor desviación en probabilidad: 0,0000670745
+peor desviación en margen:       0,0010697348
+```
+
+La auditoría había fijado 1e-6 como tolerancia y **eso era inalcanzable, por una
+razón que conviene dejar escrita**: las probabilidades se guardan redondeadas a 4
+decimales, así que el error de redondeo por sí solo llega a 5e-5. La
+reconstrucción es exacta —el test unitario contra un modelo en memoria cierra a
+1e-12—; el límite lo pone el almacenamiento, no el modelo. Bajar la tolerancia
+exigiría guardar más decimales de los que la probabilidad tiene de significado.
+
+Los otros seis prueban que se persisten **todas** las variables y la constante
+(un coeficiente que se pierda al guardar daría el mismo fallo por otra vía), que
+el desglose suma el margen, y que los coeficientes vienen de un ajuste y no de
+constantes — este último falla a propósito si alguien vuelve a escribir un
+número a mano.
+
+### Lo que deja como norma
+
+Un comentario que promete coherencia no la produce. **Si dos sitios tienen que
+calcular lo mismo, o comparten el código o hay un test que compara sus salidas.**
+Es la misma regla que ya se aplica en el resto del proyecto —el desglose que
+cierra a cero, la doble ruta que tiene que estar de acuerdo— y aquí faltaba justo
+donde el resultado sale a pantalla.
+
+Reajustar tras el cambio no movió ninguna métrica: 65,84 %, Brier 0,2128,
+log-loss 0,6132, pendiente de calibración 1,06, ECE 0,0117. Era de esperar y es
+la comprobación de que el defecto estaba **solo** en el camino a pantalla: el
+backtest siempre había usado el modelo bueno.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -1170,14 +1296,57 @@ uv run uvicorn nbastats.api.main:app --reload    # API en :8000
 cd web && npm run dev                            # interfaz en :5173
 ```
 
-Candidatos para lo siguiente, por valor:
+La auditoría de la fase 17 revisó el proyecto entero. **Los cimientos no se
+tocan**: la separación entre `analysis/` puro y `api/` con SQL se ha mantenido
+sin una grieta en 11 módulos, el walk-forward no tiene fuga, y la disciplina de
+publicar los resultados negativos (la curva de edad, el motor de resultado
+esperado) es un activo. Lo que hay no está mal construido; lo que sobra es
+**distancia entre lo construido y lo cableado**.
 
-1. **Método delta para las curvas de edad** — desbloquea la pregunta más
-   valiosa del proyecto: distinguir "está en declive" de "tiene 34 años y le
-   pasa lo que a todos". Sigue siendo lo primero de la lista.
-2. **Box scores por partido** (~6.600 peticiones, ~1,3 h) — añade `started` y
-   `dnp_reason`, y con ellos el split titular/banquillo.
-3. **Play-by-play** — elimina casi todo el bloque A de `CAPABILITIES.md`:
-   clutch, quintetos, rendimiento por cuarto.
-4. **Comparador de equipos** — el head-to-head ya existe en la API
-   (`/teams/{a}/vs/{b}`) pero todavía no tiene pantalla.
+Orden acordado para lo siguiente. Los puntos 1 a 4 **no cuestan una sola petición
+a la NBA**:
+
+1. **Prior entre temporadas en los ratings.** Hoy cada temporada empieza de cero
+   y, con `MIN_PREVIOS = 20`, **2.466 partidos (el 40 %) no tienen predicción** —
+   no es que se prediga mal, es que no se predice. Medido sobre 120 pares
+   equipo-transición: correlación del neto entre temporadas **0,542 ± 0,065**,
+   pendiente 0,580. Son ~5 líneas: `fit_ratings` ya regulariza con filas
+   aumentadas hacia cero, basta aumentarlas hacia el prior. **Hay que medir por
+   separado** si mejora los partidos que ya se evaluaban o solo amplía la
+   cobertura; lo segundo ya justifica el cambio.
+2. **Índice de ausencias** — 24 puntos porcentuales de recorrido medidos, cero
+   peticiones. Va en explicación y en el simulador, **nunca en el backtest**: que
+   un jugador no aparezca en el box score se sabe *después*, y meterlo sería
+   fuga.
+3. **Cablear lo ya construido** — `/expected` con su desglose en la ficha de
+   partido y la tabla de `k` de `/stability`. Son 1.081 líneas con 93 tests
+   escritos, probados e invisibles.
+4. **Deuda de mantenimiento, antes de que entre la 2026-27.** `daily` no
+   actualiza `play_by_play`, `team_season_ratings` ni `game_predictions`: en
+   cuanto empiece la temporada nueva, la aplicación servirá ratings viejos **como
+   si fueran actuales**. Además: las 8 columnas de origen de los puntos no las
+   lee nadie, `TEMPORADAS` está a mano en dos pantallas mientras `/catalog`
+   existe justo para eso, no hay ruta 404, y sobran `polars`/`pyarrow`/`duckdb`/
+   `httpx` y tres claves de configuración muertas.
+5. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
+   distancia**. Es la única vía con mecanismo real para rescatar el motor de
+   resultado esperado, separando la *decisión* de tiro (estable, k=3) del
+   *acierto* (ruido). Se propone con **la prueba fijada de antemano**, la misma
+   que ya falló una vez: si a k=10 y k=20 no gana, se publica el negativo y se
+   cierra la línea.
+6. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
+   `games_played` en la misma migración, que es la trampa anotada en la fase 10.
+7. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
+   pregunta más valiosa del proyecto: distinguir "está en declive" de "tiene 34
+   años y le pasa lo que a todos".
+
+Descartado a propósito: quintetos como funcionalidad destacada (los 319.323
+eventos de sustitución tienen `sub_type` vacío y el jugador que entra solo existe
+en el texto; y el décimo quinteto juega ~40 minutos en toda la temporada), más
+variables persiguiendo p<0,05, y cualquier cosa con `scikit-learn` — con 6.150
+filas y σ≈13 puntos de ruido irreducible, la señal cabe en cinco coeficientes.
+
+Lo que se aprendió tres veces seguidas y conviene tener presente: **antes de
+pagar una pasada por partido, comprobar si el endpoint masivo admite el filtro.**
+Los cuartos costaron 93 peticiones en vez de 26.400, y de dónde salen los puntos
+costó 15 en vez de 6.602. Solo el play-by-play no tenía atajo.

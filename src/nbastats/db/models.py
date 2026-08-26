@@ -487,6 +487,43 @@ class GamePrediction(Base):
     fitted_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ModelRun(Base):
+    """Los coeficientes ajustados de un modelo de pronóstico.
+
+    EXISTE PORQUE SU AUSENCIA CAUSÓ UN FALLO REAL. `build-ratings` ajustaba el
+    `WinModel`, escribía las probabilidades y **tiraba el modelo**. El endpoint
+    `/predict` no tenía de dónde leer los coeficientes, así que acabó con una
+    fórmula paralela y dos multiplicadores escritos a mano: la pantalla
+    calculaba algo distinto de lo que se había validado, sin dar ningún error.
+
+    Hay una fila por temporada evaluada, no una sola: el backtest entrena un
+    modelo por temporada usando solo las anteriores, y guardar "el último"
+    impediría reproducir las predicciones de las demás. La coherencia entre lo
+    que sirve la API y lo que dice el informe se comprueba con un test que
+    exige reproducir `game_predictions.home_win_prob` desde estos coeficientes.
+    """
+
+    __tablename__ = "model_runs"
+
+    model_version: Mapped[str] = mapped_column(String(20), primary_key=True)
+    season_id: Mapped[str] = mapped_column(
+        String(7), ForeignKey("seasons.season_id"), primary_key=True
+    )
+    """La temporada que este modelo PREDICE. Se entrenó con las anteriores."""
+
+    # Diccionarios `{variable: coeficiente}` con las claves de `forecast.FEATURES`
+    # más `const`. JSONB y no columnas fijas porque el conjunto de variables es
+    # una decisión del modelo, y añadir una no debería exigir una migración.
+    logit_params: Mapped[dict] = mapped_column(JSONB)
+    margin_params: Mapped[dict] = mapped_column(JSONB)
+
+    sigma: Mapped[Decimal] = mapped_column(Rate)
+    """Desviación típica residual del margen. Convierte puntos en probabilidad."""
+
+    train_games: Mapped[int] = mapped_column(Integer)
+    fitted_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+
 class PlayByPlay(Base):
     """Un evento de un partido. ~525 por partido, ~3,5 M en cinco temporadas.
 

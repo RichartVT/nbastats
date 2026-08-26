@@ -351,3 +351,18 @@ def get_predictions(session: Session, season: str | None = None) -> list[dict]:
     return [dict(f) for f in session.execute(sql, params).mappings()]
 
 
+def get_model_run(session: Session, season: str | None = None) -> dict | None:
+    """Los coeficientes del modelo que predice esa temporada.
+
+    Sin temporada devuelve el más reciente, que es el entrenado con más datos.
+    """
+    sql = text("""
+        SELECT model_version, season_id, logit_params, margin_params,
+               sigma, train_games, fitted_at
+        FROM model_runs
+        WHERE season_id = COALESCE(:season, (SELECT MAX(season_id) FROM model_runs))
+        ORDER BY model_version
+        LIMIT 1
+    """)
+    fila = session.execute(sql, {"season": season}).mappings().first()
+    return dict(fila) if fila else None

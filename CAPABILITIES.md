@@ -397,6 +397,24 @@ diagrama, no se puede detectar un desajuste de calibración menor de unos **4
 puntos porcentuales**. El ECE esperado bajo calibración perfecta no es cero; se
 publica siempre junto a su suelo de ruido.
 
+**El simulador y el informe de validación usan el mismo modelo, y eso es
+comprobable.** Los coeficientes se guardan en `model_runs` cuando se ajustan, y
+`/predict` los reconstruye en vez de reimplementar la fórmula; un test recorre
+los 3.674 partidos guardados y exige que la reconstrucción reproduzca la
+probabilidad almacenada. La tolerancia real es **6,7e-5, y el límite lo pone el
+redondeo a 4 decimales del almacenamiento**, no el modelo: contra un modelo en
+memoria la reconstrucción cierra a 1e-12. Esto no era así hasta la fase 17 —
+`/predict` tenía dos coeficientes escritos a mano y llegaba a desviarse **6
+puntos porcentuales** del modelo validado.
+
+El desglose que acompaña a cada pronóstico (fuerza, localía, descanso,
+back-to-back) **suma el margen esperado por construcción**, porque cada barra es
+el coeficiente del modelo por su variable. En sede neutral se resta la localía y
+se avisa: **no hay sedes neutrales en el entrenamiento**, así que ahí el modelo
+extrapola y no puede saber si la ventaja se anula del todo.
+
+---
+
 ## 6. Qué se repite y qué es la noche
 
 `analysis/stability.py` descompone la varianza de cada componente entre equipos

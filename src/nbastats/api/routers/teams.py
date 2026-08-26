@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from nbastats.analysis.forecast import GameFeatures, model_from_params
 from nbastats.analysis.game_types import describe_game
 from nbastats.analysis.reliability import analyze_splits
 from nbastats.analysis.trends import analyze_trend, rolling_mean
@@ -27,6 +28,13 @@ from nbastats.api.schemas import (
     TeamSummaryOut,
 )
 from nbastats.db.session import get_db
+
+
+def _norm_cdf(z: float) -> float:
+    """Normal acumulada. Import diferido: `scipy` solo hace falta aquí."""
+    from scipy import stats as _st
+
+    return float(_st.norm.cdf(z))
 
 router = APIRouter(tags=["equipos"])
 
@@ -284,6 +292,139 @@ def ratings(season: str | None = Query(None), db: Session = Depends(get_db)) -> 
             }
             for f in filas
         ],
+    }
+
+
+@router.get("/predict", tags=["pronóstico"])
+def predict(
+    home: int = Query(..., description="Equipo local"),
+    away: int = Query(..., description="Equipo visitante"),
+    season: str | None = Query(None),
+    neutral: bool = Query(False, description="Sede neutral: anula la localía"),
+    rest_home: float = Query(1.0, ge=0, le=10),
+    rest_away: float = Query(1.0, ge=0, le=10),
+    b2b_home: bool = Query(False),
+    b2b_away: bool = Query(False),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Probabilidad de victoria del local, con el desglose de dónde sale.
+
+    Usa EXACTAMENTE el modelo que se validó: los coeficientes se leen de
+    `model_runs` y se reconstruye el `WinModel`, en vez de reimplementar la
+    fórmula aquí. Una versión anterior de este endpoint tenía su propia
+    fórmula con dos multiplicadores escritos a mano, y calculaba algo distinto
+    de lo que medía `/model/backtest` sin dar ningún error. Hay un test que
+    exige que estos coeficientes reproduzcan las probabilidades guardadas.
+
+    NO conoce las ausencias. Es el factor con más recorrido de todos los
+    medidos —24 puntos porcentuales de diferencia en victorias entre jugar con
+    la rotación entera y con 100+ minutos habituales fuera— y el modelo no lo
+    ve. Va dicho en la respuesta, no en una nota al pie.
+    """
+    if home == away:
+        raise HTTPException(400, "Un equipo no juega contra sí mismo.")
+
+    rl = tq.get_rating(db, home, season)
+    rv = tq.get_rating(db, away, season)
+    if not rl or not rv:
+        raise HTTPException(404, "Sin rating para alguno de los dos equipos.")
+
+    fila = tq.get_model_run(db, season or rl["season_id"]) or tq.get_model_run(db)
+    if not fila:
+        raise HTTPException(404, "No hay modelo entrenado. Corre `nbastats build-ratings`.")
+
+    modelo = model_from_params(
+        fila["logit_params"], fila["margin_params"],
+        float(fila["sigma"]), fila["train_games"],
+    )
+    variables = GameFeatures(
+        rating_diff=float(rl["net"]) - float(rv["net"]),
+        is_home_court=not neutral,
+        rest_diff=min(rest_home, 4.0) - min(rest_away, 4.0),
+        b2b_diff=(1.0 if b2b_away else 0.0) - (1.0 if b2b_home else 0.0),
+    )
+
+    # El desglose sale de los MISMOS coeficientes, multiplicando cada variable
+    # por el suyo. Así la suma de las barras es el margen esperado por
+    # construcción, y no una aproximación que pueda separarse de él.
+    # Sin redondear: quien sume los componentes a mano debe obtener EXACTAMENTE
+    # el margen esperado. El redondeo es cosa de la pantalla, no del contrato.
+    c = modelo.margin_params
+    componentes = [
+        {
+            "key": "rating", "label": "Diferencia de fuerza",
+            "points": c["rating_diff"] * variables.rating_diff,
+        },
+        {
+            "key": "home", "label": "Localía",
+            # La localía vive en la constante: en el entrenamiento no había
+            # sedes neutrales, así que la columna era constante y su efecto se
+            # absorbió ahí. Ver el aviso sobre extrapolación más abajo.
+            "points": 0.0 if neutral else c["const"],
+        },
+        {
+            "key": "rest", "label": "Descanso",
+            "points": c["rest_diff"] * variables.rest_diff,
+        },
+        {
+            "key": "b2b", "label": "Segundo partido en 2 días",
+            "points": c["b2b_diff"] * variables.b2b_diff,
+        },
+    ]
+
+    margen = modelo.expected_margin(variables)
+    if neutral:
+        margen -= c["const"]
+    sigma = modelo.sigma
+    prob = modelo.probability(variables) if not neutral else float(
+        _norm_cdf(margen / sigma) if sigma > 0 else 0.5
+    )
+
+    avisos = [
+        f"El intervalo del margen es de ±{round(1.96 * sigma)} puntos. La varianza "
+        "de un partido aplasta cualquier diferencia de plantilla: un 65% significa "
+        "que ese equipo pierde uno de cada tres.",
+        "No conoce ausencias, lesiones ni traspasos. Jugar sin la rotación habitual "
+        "vale hasta 24 puntos porcentuales de probabilidad, y el modelo no lo ve.",
+        "Calibrado solo sobre temporada regular. No usarlo para playoffs.",
+    ]
+    if neutral:
+        avisos.append(
+            "Sede neutral: el modelo se entrenó SIN partidos neutrales, así que "
+            "aquí se le resta la localía por extrapolación. Con 14 partidos "
+            "neutrales en cinco temporadas no hay muestra para comprobar que sea "
+            "correcto anularla del todo."
+        )
+    if not modelo.agrees(variables):
+        avisos.append(
+            "Las dos rutas de cálculo —logística sobre el resultado y normal sobre "
+            "el margen— discrepan más de 3 puntos porcentuales en este caso. La "
+            "probabilidad mostrada es la media; tómala con reservas."
+        )
+
+    return {
+        "home": {
+            "team_id": home,
+            "abbreviation": rl["abbreviation"],
+            "net": round(float(rl["net"]), 2),
+        },
+        "away": {
+            "team_id": away,
+            "abbreviation": rv["abbreviation"],
+            "net": round(float(rv["net"]), 2),
+        },
+        "season": rl["season_id"],
+        "model_version": fila["model_version"],
+        "fitted_at": fila["fitted_at"],
+        "train_games": fila["train_games"],
+        "home_win_prob": round(prob, 4),
+        "prob_logit": round(modelo.probability_logit(variables), 4),
+        "prob_margin": round(modelo.probability_margin(variables), 4),
+        "expected_margin": margen,
+        "margin_sigma": round(sigma, 2),
+        "margin_ci95": [round(margen - 1.96 * sigma, 1), round(margen + 1.96 * sigma, 1)],
+        "components": componentes,
+        "warnings": avisos,
     }
 
 
