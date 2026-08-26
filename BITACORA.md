@@ -867,6 +867,103 @@ completos, porque el marcador viaja en cada evento.
 
 ---
 
+## Fase 13 — Motor de resultado esperado, y su resultado negativo
+
+`analysis/expected.py`: dado un partido, cuántos puntos cabía esperar con **ese**
+volumen de tiro y el acierto normal, y a qué se debe la diferencia con lo que
+pasó.
+
+### Lo que funciona: el desglose cierra exacto
+
+Se mantiene el volumen —cuántos triples se tiran y cuántos se conceden se mide
+en k=3 y k=8, es decisión— y se sustituye solo el **acierto**. Al dejar el
+volumen fijo, cada término es lineal:
+
+    suerte_3 = 3 · FG3A · (fg3% − norma)
+
+Sin términos cruzados, sin Shapley, sin discutir el orden de sustitución. Y como
+los puntos son `2·FGM + FG3M + FTM` por identidad —comprobado en las 13.204
+filas de equipo y las 140.932 de jugador, sin una excepción— la suma de los
+componentes **es** la diferencia entre el margen real y el esperado.
+
+Verificado sobre los 6.150 partidos de temporada regular con normas
+leave-one-out: **peor residuo sin explicar, 0,000000000000 puntos.**
+
+### Lo que NO funciona: "debió ganar" no sobrevive a su propia prueba
+
+La prueba decisiva, fijada antes de mirar el resultado: *si el margen esperado
+mide mejor la fuerza de un equipo que el margen real, la media de los primeros k
+partidos debe predecir el resto de la temporada mejor.* Sobre 150
+equipos-temporada, RMSE fuera de muestra:
+
+| k | Margen real | Solo se normaliza el rival | Solo el triple, ambos lados | Solo el triple concedido |
+|---|---|---|---|---|
+| 10 | **5,003** | 5,371 | 5,104 | 5,029 |
+| 20 | 4,300 | 4,695 | 4,333 | **4,215** |
+| 30 | 4,261 | 4,577 | 4,357 | **4,196** |
+| 41 | **4,254** | 4,704 | 4,642 | 4,344 |
+
+La primera versión —sustituir el acierto de los dos equipos por la norma de
+liga— perdía en los cuatro cortes, y con razón: tira habilidad real, porque la
+propia tabla de estabilidad dice que el acierto de 2 (k=16) y el de libres
+(k=21) **son** habilidad. Corregido eso, la mejor variante gana por un 1-2 % en
+dos cortes y pierde en los otros dos. Con 150 unidades, eso es ruido.
+
+**Conclusión: el margen esperado no es un mejor estimador de la fuerza de un
+equipo que el margen real.** El criterio decía que si a k=10 y k=20 no gana, no
+se publica como veredicto. A k=10 pierde.
+
+### Qué se hace con eso
+
+Se separan dos afirmaciones que estaban mezcladas:
+
+1. **"De los 4 puntos de derrota, el acierto en triples del rival por encima de
+   su norma aporta −12."** Es aritmética exacta, verificable a mano y útil. Se
+   publica.
+2. **"Debió ganar."** Es un veredicto sobre el mérito, y para sostenerlo hacía
+   falta que el margen esperado midiera mejor la fuerza. No la mide. **No se
+   publica como veredicto.**
+
+La pantalla dirá de dónde salieron los puntos y cuánto pesó cada factor, sin
+decidir quién merecía ganar. Es el mismo precedente que la curva de edad: existe
+en código, no tiene endpoint, y el motivo está escrito.
+
+### El continuo por componente tampoco lo salva
+
+Quedaba una vía: en vez de sustituir un componente del todo o nada, encogerlo
+hacia la liga con **su** peso `w(n) = n/(n+K)`, usando los `K` medidos. Es el
+estimador estadísticamente correcto y no se había probado.
+
+Sobre equipos-temporada seguía alternando de signo (+1,3 %, −0,4 %, +0,8 %,
+−4,1 %), así que se rehízo la prueba **a nivel de partido**, donde hay potencia
+de verdad: qué estimador de fuerza acierta más veces el ganador del siguiente
+partido, con walk-forward estricto y ambos equipos con ≥20 partidos previos.
+
+| Estimador | Acierto | Muestra |
+|---|---|---|
+| Margen real medio | **64,12 %** | 4.596 partidos |
+| Continuo por componente | 63,69 % | 4.596 partidos |
+
+Diferencia **−0,44 pp** sobre 516 partidos discordantes: por debajo del umbral
+de ruido de ±1,0 pp. Los dos estimadores coinciden en el 88,8 % de los partidos.
+
+**Conclusión firme: normalizar el acierto no mejora la estimación de fuerza, ni
+del todo, ni por partes, ni con el peso correcto.** El simple diferencial de
+puntos ya lo hace igual de bien. Se probaron cinco formulaciones y ninguna
+supera al margen real.
+
+Es coherente con lo que se sabe del baloncesto —el diferencial de puntos es un
+predictor muy difícil de batir con ajustes de box score— pero aquí está medido
+sobre estos datos y no citado de memoria.
+
+**Y deja una pista para la fase de pronóstico:** el margen real medio acierta el
+64,12 %, prácticamente lo mismo que la línea base de "gana el de mejor récord"
+(64,4 %). Para batir ese listón no hay que tocar el acierto de tiro; hay que
+meter lo que ninguno de los dos tiene — **ajuste por calidad del rival**,
+localía y descanso.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
