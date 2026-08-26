@@ -58,7 +58,9 @@ def status() -> None:
         tabla.add_column("Filas", justify="right")
 
         for modelo in (m.Team, m.Player, m.Season, m.Game, m.TeamGameStats,
-                       m.PlayerGameStats, m.PlayerGameAdvanced):
+                       m.PlayerGameStats, m.PlayerGameAdvanced,
+                       m.PlayerPeriodStats, m.GamePeriodScore, m.GameOfficial,
+                       m.PlayByPlay):
             n = s.scalar(select(func.count()).select_from(modelo))
             tabla.add_row(modelo.__tablename__, f"{n:,}")
         console.print(tabla)
@@ -111,6 +113,35 @@ def status() -> None:
         cob.add_row("Fichas de equipo", f"{con_estadio:,}/30", "estadio, entrenador, GM")
         cob.add_row("Plantillas", f"{plantillas:,}", "quién jugaba en cada equipo y año")
         cob.add_row("Clasificación", f"{clasif:,}", "posiciones y récords")
+
+        con_cuartos = s.scalar(
+            select(func.count(func.distinct(m.GamePeriodScore.game_id)))
+        )
+        jug_con_cuartos = s.scalar(
+            select(func.count(func.distinct(m.PlayerPeriodStats.game_id)))
+        )
+        cob.add_row(
+            "Marcador por cuarto", f"{con_cuartos:,}/{total_part:,}" if total_part else "—",
+            "ficha de partido, remontadas",
+        )
+        cob.add_row(
+            "Box por cuarto", f"{jug_con_cuartos:,}/{total_part:,}" if total_part else "—",
+            "rendimiento por cuarto del jugador",
+        )
+        con_pbp = s.scalar(select(func.count(func.distinct(m.PlayByPlay.game_id))))
+        con_puntos = s.scalar(
+            select(func.count()).select_from(m.TeamGameStats)
+            .where(m.TeamGameStats.pts_paint.isnot(None))
+        )
+        total_tgs = s.scalar(select(func.count()).select_from(m.TeamGameStats))
+        cob.add_row(
+            "Play-by-play", f"{con_pbp:,}/{total_part:,}" if total_part else "—",
+            "clutch, rachas, zonas de tiro, quintetos",
+        )
+        cob.add_row(
+            "Origen de los puntos", f"{con_puntos:,}/{total_tgs:,}" if total_tgs else "—",
+            "pintura, contraataque, tras pérdida",
+        )
         console.print(cob)
 
         temporadas = s.execute(
@@ -252,6 +283,38 @@ def ingest_summaries_cmd(
         console.print(
             f"[yellow]{r['fallidos']} fallidos: vuelve a lanzarlo para reintentar[/yellow]"
         )
+
+
+@app.command("ingest-pbp")
+def ingest_pbp_cmd(
+    seasons: str = typer.Option("", help="Coma-separadas. Vacío = todas"),
+    limit: int = typer.Option(0, help="Solo los N primeros pendientes. Para probar"),
+    verbose: bool = False,
+) -> None:
+    """Play-by-play: cada evento de cada partido.
+
+    UNA PETICIÓN POR PARTIDO: ~6.600 peticiones y ~3 h, ~3,5 M filas. Se puede
+    interrumpir y relanzar; retoma por los partidos que falten, empezando por
+    los más recientes.
+    """
+    _configurar_logging(verbose)
+    from nbastats.ingest.playbyplay import ingest_play_by_play, verificar_marcador
+
+    lista = [x.strip() for x in seasons.split(",") if x.strip()] or None
+    r = ingest_play_by_play(lista, limit=limit or None)
+    console.print(
+        f"[green]{r['pedidos'] - r['fallidos']:,} partidos · {r['eventos']:,} eventos[/green]"
+    )
+    if r["fallidos"]:
+        console.print(f"[yellow]{r['fallidos']} sin play-by-play en la fuente[/yellow]")
+
+    v = verificar_marcador()
+    malos = v["comprobados"] - v["cuadran"]
+    color = "green" if malos == 0 else "red"
+    console.print(
+        f"[{color}]Marcador: {v['cuadran']:,}/{v['comprobados']:,} partidos "
+        f"cuadran con el resultado final[/{color}]"
+    )
 
 
 @app.command("ingest-teams")

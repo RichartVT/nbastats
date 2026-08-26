@@ -167,14 +167,7 @@ están cargados.
 
 | Pregunta | Por qué no |
 |---|---|
-| "¿Cuánto anota en el clutch (últimos 5 min, ≤5 de diferencia)?" | El box score no tiene marca de tiempo. Haría falta play-by-play. |
-| "¿Cómo rinde en el cuarto cuarto?" | El box score de jugador no viene desglosado por periodo. |
-| "¿Desde qué zonas de la cancha tira mejor?" | Requiere coordenadas de tiro (`shot_chart_detail`). |
-| "¿Qué quinteto funciona mejor?" / on-off | Requiere las sustituciones del play-by-play. |
-| "¿A quién le da más asistencias?" | El box score cuenta asistencias, no quién las recibe. |
-| "¿A quién defendió?" | Requiere datos de seguimiento (tracking), que ni siquiera están en el play-by-play. |
-| "¿Anotó 10 puntos seguidos?" | Rachas intra-partido: play-by-play. |
-| "¿Cómo le fue tras un tiempo muerto?" | Play-by-play. |
+| "¿A quién defendió?" | Requiere datos de seguimiento (tracking), que ni siquiera están en el play-by-play. `BoxScorePlayerTrackV3`, ~6.600 peticiones. |
 | "¿Rinde mejor como titular que saliendo del banquillo?" | `PlayerGameLogs` no marca quién fue titular. Requeriría una petición por partido (~6.600) en vez de una por temporada. |
 | "¿Cuántos partidos se perdió por lesión?" | Solo aparecen los jugadores que jugaron: no hay filas de DNP ni motivo. Misma fuente y mismo coste que la anterior. Y ojo: ni siquiera con ella se distingue lesión de descanso programado o sanción. |
 | "¿Fue un tiro abierto o contestado?" | El play-by-play da dónde se tiró, no quién estaba cerca. Requiere tracking. |
@@ -351,9 +344,16 @@ se expone lo que no aguanta, y el motivo queda escrito.
 | Rebotes en sábado, 5 temporadas | ⚠️ Tipo B — se responde con `n`, IC y aviso |
 | Puntos contra los Lakers, 5 temporadas | ⚠️ Tipo B — n≈15, plantilla rival distinta |
 | Puntos en sábado contra los Lakers | ⚠️ Tipo B — n≈2, insuficiente |
-| Puntos en el último minuto | ❌ Tipo A — falta play-by-play |
-| eFG% desde la esquina | ❌ Tipo A — faltan coordenadas de tiro |
-| Mejor quinteto del equipo | ❌ Tipo A — faltan sustituciones |
+| Puntos en el último minuto | ✅ Directo — el play-by-play tiene reloj |
+| eFG% desde la esquina | ✅ Directo — coordenadas en cada tiro |
+| Puntos en la pintura del rival | ✅ Directo |
+| Récord con el que llegaban al partido | ✅ Directo |
+| ¿Cuántos partidos hacen falta para fiarse de su % de triple? | ✅ Directo — 47 (§6) |
+| Acierto en triples del rival como medida de su defensa | ⚠️ Tipo B — k=150: es la noche, no el equipo (§6) |
+| ¿Acierta más en el clutch? | ⚠️ Tipo B — el dato ya está; la muestra sigue sin dar |
+| Mejor quinteto del equipo | ⚠️ Tipo B — las sustituciones ya están, pero el quinteto nº10 juega ~40 min en toda la temporada |
+| ¿A quién defendió? | ❌ Tipo A — requiere tracking |
+| ¿Rinde mejor como titular? | ❌ Tipo A — `started` sin cargar |
 
 ---
 

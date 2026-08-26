@@ -806,6 +806,67 @@ triple, no.
 
 ---
 
+## Fase 12 — Play-by-play
+
+3.251.908 eventos, 6.602/6.602 partidos, **cero fallos en la fuente**. 6.602
+peticiones en **1 h 11 min** — bastante menos que las ~3 h estimadas. La tabla
+ocupa 576 MB y la base pasa de 233 MB a 844 MB.
+
+### Dos errores de diseño que solo aparecieron cargando
+
+**La clave primaria estaba mal.** Se asumió `(game_id, action_number)`. Los
+eventos LIGADOS comparten `action_number`: un tiro fallado y el tapón que lo
+causó llegan con el mismo número y el mismo reloj, y solo `action_id` los
+separa. Medido: 577 eventos con 577 `action_id` distintos y 543
+`action_number`. La migración se reescribió a mano para recrear la tabla —
+estaba vacía, así que el esquema quedó como si hubiera nacido bien— y
+`action_number` se conservó, porque es justo lo que agrupa los eventos ligados.
+
+**`personId` no siempre es un jugador.** En los tiempos muertos lleva el id del
+EQUIPO; en las técnicas, el del ÁRBITRO (aparecieron 320, 544 y 739 en un solo
+partido). Los tres violaban la clave ajena. Ahora se validan contra el censo de
+`players` y lo que no lo sea va a NULL; su identidad sigue viva en
+`description`.
+
+Los dos tienen test. La lección se repite por tercera vez en el proyecto: el
+esquema estrecho hace de test, y las suposiciones sobre la forma de la fuente
+solo se confirman cargándola.
+
+### El cuadre que parecía roto y no lo estaba
+
+La comprobación automática dio 6.598 de 6.602. Al mirar los cuatro, el fallo era
+**de la comprobación**: tomaba el marcador del último evento, y los eventos
+posteriores a la última canasta arrastran el marcador anterior.
+
+```
+479  Hield 24' 3PT    122-112   <- el bueno
+480  Instant Replay   119-112   <- revierte
+481  End of Period    119-112   <- y aquí miraba la comprobación
+```
+
+El marcador nunca decrece dentro de un partido, así que lo correcto es el
+MÁXIMO. Con esa corrección: **6.602 de 6.602 exactos**, incluido el partido que
+aparentaba estar truncado 52 puntos. Documentado en el docstring de
+`verificar_marcador()` para que a nadie le vuelva a parecer que hay cuatro
+partidos rotos.
+
+### `ShotChartDetail` ya no hará falta nunca
+
+Las coordenadas (`x_legacy`, `y_legacy`, `shot_distance`) venían dentro del
+play-by-play. `CAPABILITIES.md` lo contaba como una ampliación aparte de ~3.000
+peticiones; se ahorró la pasada entera.
+
+### Lo que quedó descartado, y por qué
+
+Se evaluó bajar los cambios de liderato, la máxima ventaja y las veces empatado
+de `BoxScoreSummaryV2`. Comprobado: su bloque `OtherStats` viene **vacío en
+2025-26** (funciona en 2022-23), y la V3 no los trae — su bloque `statistics` es
+literalmente `{"dummyKey": "dummyValue"}`. Habrían sido 6.602 peticiones para un
+dato ausente en el 30 % de los partidos. Los tres se derivan del play-by-play,
+completos, porque el marcador viaja en cada evento.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:

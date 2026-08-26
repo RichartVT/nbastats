@@ -414,6 +414,87 @@ class PlayerPeriodStats(Base):
     plus_minus: Mapped[int | None] = mapped_column(SmallInteger)
 
 
+class PlayByPlay(Base):
+    """Un evento de un partido. ~525 por partido, ~3,5 M en cinco temporadas.
+
+    Es la tabla más grande del proyecto por un orden de magnitud, y la única de
+    la que cuelgan preguntas que hoy no tienen respuesta: rachas, clutch,
+    quintetos, cambios de liderato y —porque las coordenadas vienen dentro— las
+    zonas de tiro. `ShotChartDetail` no hace falta: medido sobre un partido de
+    muestra, los 183 tiros de campo traían `xLegacy`/`yLegacy`, los 183.
+
+    NO SE GUARDA lo que se puede derivar o no sirve: `teamTricode`,
+    `playerName` y `playerNameI` salen de un JOIN; `location` se deduce
+    comparando `team_id` con `games.home_team_id`; `pointsTotal` es una suma
+    acumulada; `videoAvailable` y `actionId` no tienen uso analítico. Quitar
+    esos siete campos ahorra ~90 MB.
+
+    `elapsed_seconds` SÍ se guarda aunque sea derivable de `(period,
+    clock_seconds)`, y es la excepción deliberada al principio de derivar en
+    vez de almacenar: es la columna por la que filtra y ordena todo —ventanas
+    de clutch, fronteras de posesión, rachas— y calcularla en cada WHERE sobre
+    3,5 M filas impediría usar índice.
+    """
+
+    __tablename__ = "play_by_play"
+    __table_args__ = (
+        # Un solo índice además de la PK, y parcial. Uno completo por jugador
+        # costaría ~90 MB para consultas que todavía no existen; se añadirán
+        # más cuando una consulta real vaya lenta, no antes.
+        Index(
+            "ix_pbp_tiros",
+            "player_id",
+            "shot_result",
+            postgresql_where=text("is_field_goal"),
+        ),
+        CheckConstraint("period >= 1", name="ck_pbp_period_positivo"),
+    )
+
+    game_id: Mapped[str] = mapped_column(
+        String(20), ForeignKey("games.game_id", ondelete="CASCADE"), primary_key=True
+    )
+    # La clave es `action_id`, NO `action_number`. Se comprobó con los datos:
+    # los eventos LIGADOS comparten `action_number` — un tiro fallado y el
+    # tapón que lo causó llevan el mismo, con el mismo reloj — y solo
+    # `action_id` los distingue. En un partido de muestra, 577 eventos tenían
+    # 577 `action_id` distintos y solo 543 `action_number`.
+    action_id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+
+    # Se conserva porque es justo lo que agrupa los eventos ligados: con él se
+    # sabe que ese tapón corresponde a ese tiro, sin volver a cruzar por reloj.
+    action_number: Mapped[int | None] = mapped_column(SmallInteger)
+
+    period: Mapped[int] = mapped_column(SmallInteger)
+    # Reloj del periodo, en segundos RESTANTES (720 al empezar un cuarto).
+    clock_seconds: Mapped[int | None] = mapped_column(SmallInteger)
+    # Transcurridos desde el salto inicial. Máximo 4.380 con 5 prórrogas.
+    elapsed_seconds: Mapped[int | None] = mapped_column(SmallInteger)
+
+    # NULL en los eventos que no son de nadie: finales de periodo, saltos,
+    # rebotes de equipo. Un 0 los ataría a una clave ajena inexistente.
+    team_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("teams.team_id"))
+    player_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("players.player_id")
+    )
+
+    action_type: Mapped[str | None] = mapped_column(String(30))
+    sub_type: Mapped[str | None] = mapped_column(String(40))
+    description: Mapped[str | None] = mapped_column(Text)
+
+    score_home: Mapped[int | None] = mapped_column(SmallInteger)
+    score_away: Mapped[int | None] = mapped_column(SmallInteger)
+
+    is_field_goal: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    shot_result: Mapped[bool | None] = mapped_column(Boolean)
+    shot_value: Mapped[int | None] = mapped_column(SmallInteger)
+    shot_distance: Mapped[int | None] = mapped_column(SmallInteger)
+    # Coordenadas heredadas de la NBA: origen en el aro, décimas de pie.
+    x_legacy: Mapped[int | None] = mapped_column(SmallInteger)
+    y_legacy: Mapped[int | None] = mapped_column(SmallInteger)
+
+
 class GameOfficial(Base):
     """Árbitro de un partido. Una fila por partido y árbitro (tres por partido).
 
