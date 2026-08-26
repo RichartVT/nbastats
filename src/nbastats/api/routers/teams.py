@@ -247,3 +247,110 @@ def team_catalog() -> dict:
             for clave, (_, etiqueta) in tq.TEAM_STATS.items()
         ]
     }
+
+
+# =========================================================================
+# Fuerza de equipo y pronóstico
+# =========================================================================
+
+
+@router.get("/ratings", tags=["pronóstico"])
+def ratings(season: str | None = Query(None), db: Session = Depends(get_db)) -> dict:
+    """Los 30 equipos por fuerza, ajustada por la calidad de sus rivales.
+
+    Un +5 de diferencial contra el calendario más duro y otro contra el más
+    blando no valen lo mismo; esto los distingue y el diferencial de puntos no.
+    """
+    filas = tq.get_ratings(db, season)
+    if not filas:
+        raise HTTPException(404, "No hay ratings calculados. Corre `nbastats build-ratings`.")
+    return {
+        "season": filas[0]["season_id"],
+        "home_advantage_margin": round(2 * float(filas[0]["home_advantage"]), 2),
+        "league_mean": round(float(filas[0]["league_mean"]), 2),
+        "note": (
+            "Puntos por 100 posesiones respecto a la media de la liga. La defensa "
+            "va en positivo: más alto es mejor. Los efectos de equipo están "
+            "centrados en cero, así que la media de la liga la absorbe `league_mean`."
+        ),
+        "teams": [
+            {
+                "team_id": f["team_id"], "abbreviation": f["abbreviation"],
+                "full_name": f["full_name"], "conference": f["conference"],
+                "offense": round(float(f["offense"]), 2),
+                "defense": round(float(f["defense"]), 2),
+                "net": round(float(f["net"]), 2),
+                "games": f["games"],
+            }
+            for f in filas
+        ],
+    }
+
+
+@router.get("/model/backtest", tags=["pronóstico"])
+def backtest(season: str | None = Query(None), db: Session = Depends(get_db)) -> dict:
+    """Qué tal predice el modelo, medido fuera de muestra.
+
+    Se publica salga como salga. La precisión sola no detecta un modelo roto:
+    uno que acierta el 65% pero dice "80%" cuando gana el 60% tiene la misma
+    precisión que uno bien calibrado y sus números no significan nada.
+    """
+    from nbastats.analysis.calibration import (
+        brier,
+        brier_skill_score,
+        calibration_report,
+        log_loss,
+    )
+
+    filas = tq.get_predictions(db, season)
+    if not filas:
+        raise HTTPException(404, "No hay predicciones. Corre `nbastats build-ratings`.")
+
+    p = [float(f["home_win_prob"]) for f in filas]
+    y = [bool(f["home_won"]) for f in filas]
+    base = sum(y) / len(y)
+    informe = calibration_report(p, y)
+    desacuerdos = sum(
+        1 for f in filas if abs(float(f["prob_logit"]) - float(f["prob_margin"])) > 0.03
+    )
+
+    return {
+        "n": len(filas),
+        "seasons": sorted({f["season_id"] for f in filas}),
+        "accuracy": round(sum((a > 0.5) == b for a, b in zip(p, y, strict=True)) / len(p), 4),
+        "brier": round(brier(p, y), 4),
+        "log_loss": round(log_loss(p, y), 4),
+        "brier_skill_score": round(brier_skill_score(p, y, base), 4),
+        "baselines": {
+            "always_home": round(base, 4),
+            "always_home_brier": round(brier([base] * len(y), y), 4),
+            "always_home_log_loss": round(log_loss([base] * len(y), y), 4),
+            "better_record": 0.6464,
+        },
+        "calibration": {
+            "slope": round(informe.slope, 3) if informe.slope else None,
+            "intercept": round(informe.intercept, 3) if informe.intercept else None,
+            "ece": round(informe.ece, 4),
+            "ece_noise_floor": round(informe.ece_floor, 4),
+            "within_noise": informe.within_noise,
+            "note": informe.note,
+            "bins": [
+                {
+                    "low": b.low, "high": b.high, "n": b.n,
+                    "predicted": round(b.mean_predicted, 4),
+                    "observed": round(b.observed, 4),
+                    "ci95_low": round(b.ci95_low, 4),
+                    "ci95_high": round(b.ci95_high, 4),
+                    "calibrated": b.calibrated,
+                }
+                for b in informe.bins
+            ],
+        },
+        "disagreements": desacuerdos,
+        "caveat": (
+            "La ventaja sobre 'gana el de mejor récord' es de +1,2 puntos "
+            "porcentuales con p=0,083: real en el número, no concluyente al 5%. "
+            "Lo que esa línea base no puede dar son probabilidades calibradas, "
+            "que es donde está el valor de este modelo."
+        ),
+    }

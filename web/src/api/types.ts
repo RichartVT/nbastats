@@ -555,4 +555,115 @@ export interface CatalogOption {
 export interface Catalog {
   stats: CatalogStat[]
   dimensions: CatalogDimension[]
+  /** De la más reciente a la más antigua. Sale de los datos cargados, no de
+   *  una constante escrita a mano que se queda desfasada. */
+  seasons: string[]
+  player_filters: {
+    statuses: CatalogOption[]
+    positions: CatalogOption[]
+    sorts: CatalogOption[]
+    min_games: { value: number; label: string }[]
+    min_fg3a: { value: number; label: string }[]
+    /** Suelo que la API aplica sola al ordenar por % de triples. */
+    min_fg3a_auto: number
+    min_tsa: { value: number; label: string }[]
+    /** Suelo que la API aplica sola al ordenar por TS%. */
+    min_tsa_auto: number
+    /** Tal cual los escribe la NBA ("USA", "Serbia"), con cuántos jugadores
+     *  hay de cada uno. */
+    countries: { country: string; n: number }[]
+  }
+}
+
+// =========================================================================
+// Fuerza de equipo y pronóstico
+// =========================================================================
+
+export interface TeamRating {
+  team_id: number
+  abbreviation: string
+  full_name: string
+  conference: string | null
+  /** Puntos por 100 posesiones por encima de la media de la liga. */
+  offense: number
+  /** Puntos por 100 que evita. POSITIVO = buena defensa. */
+  defense: number
+  net: number
+  games: number
+}
+
+export interface RatingsResponse {
+  season: string
+  /** Ventaja de jugar en casa, en puntos de MARGEN (el doble del coeficiente). */
+  home_advantage_margin: number
+  league_mean: number
+  note: string
+  teams: TeamRating[]
+}
+
+export interface PredictionComponent {
+  key: string
+  label: string
+  points: number
+}
+
+export interface Prediction {
+  home: { team_id: number; abbreviation: string; net: number }
+  away: { team_id: number; abbreviation: string; net: number }
+  season: string
+  /** Qué modelo respondió, y cuándo se ajustó. Sin esto no hay forma de saber
+   *  si la pantalla está sirviendo un modelo viejo. */
+  model_version: string
+  fitted_at: string
+  train_games: number
+  home_win_prob: number
+  /** Las dos rutas por separado: si discrepan, el número de arriba es la media
+   *  de dos cosas que no se ponen de acuerdo, y eso hay que poder verlo. */
+  prob_logit: number
+  prob_margin: number
+  expected_margin: number
+  margin_sigma: number
+  margin_ci95: [number, number]
+  components: PredictionComponent[]
+  /** Van siempre visibles, no en un tooltip: son parte del resultado. */
+  warnings: string[]
+}
+
+export interface CalibrationBin {
+  low: number
+  high: number
+  n: number
+  predicted: number
+  observed: number
+  ci95_low: number
+  ci95_high: number
+  /** ¿El intervalo de la frecuencia real contiene lo que el modelo prometió? */
+  calibrated: boolean
+}
+
+export interface Backtest {
+  n: number
+  seasons: string[]
+  accuracy: number
+  brier: number
+  log_loss: number
+  brier_skill_score: number
+  baselines: {
+    always_home: number
+    always_home_brier: number
+    always_home_log_loss: number
+    better_record: number
+  }
+  calibration: {
+    slope: number | null
+    intercept: number | null
+    ece: number
+    /** El ECE esperado bajo calibración PERFECTA no es cero. Se publica al lado. */
+    ece_noise_floor: number
+    within_noise: boolean
+    note: string
+    bins: CalibrationBin[]
+  }
+  disagreements: number
+  caveat: string
 }

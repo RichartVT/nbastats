@@ -1112,6 +1112,55 @@ anotado porque es el tipo de error que no rompe nada y se detecta tarde.
 
 ---
 
+## Fase 16 — A pantalla
+
+`nbastats build-ratings` calcula el walk-forward y lo persiste: **3 segundos**
+para 6.140 partidos, 5 temporadas de ratings y 3.674 predicciones. No pide nada
+a la NBA. Se guarda en vez de calcularse al vuelo por lo mismo que existen las
+vistas materializadas: rápido una vez, inviable por petición.
+
+`game_predictions` es **inmutable por diseño**: una predicción escrita no se
+reescribe, y un modelo nuevo es una `model_version` nueva. Sin eso el backtest
+"mejora" solo cada vez que alguien toca algo y deja de ser una medición.
+
+### Tres endpoints
+
+| Endpoint | Qué da |
+|---|---|
+| `GET /ratings` | Los 30 equipos por fuerza, ataque y defensa separados |
+| `GET /predict` | Probabilidad con el desglose de dónde sale cada punto |
+| `GET /model/backtest` | Métricas, líneas base y los diez tramos de calibración |
+
+Una decisión: `/predict` **lee los coeficientes de una predicción guardada** en
+vez de reajustar el modelo. Así la pantalla no puede discrepar del informe de
+validación, que es el fallo silencioso más fácil de cometer aquí.
+
+### Una pantalla, tres secciones
+
+`/pronostico`. Simulador arriba, ratings en medio, validación abajo. Es
+deliberado que estén juntas: quien mire una probabilidad tiene la calibración
+en la misma página, no en un apartado que nadie visita.
+
+El simulador enseña el desglose en barras divergentes centradas en cero —el
+cero es "no aporta", y una barra que crece desde la izquierda lo escondería— y
+los tres avisos **completos y visibles**, no en un tooltip:
+
+> El intervalo del margen es de ±27 puntos. La varianza de un partido aplasta
+> cualquier diferencia de plantilla: un 65 % significa que ese equipo pierde uno
+> de cada tres.
+
+Ejemplo real: OKC (+9,42 de neto) contra LAL, con dos días de descanso frente a
+back-to-back, da **80 %** y un margen esperado de +11,8 — con un intervalo de
+[−15,7, +39,2]. Las dos cifras juntas son la información; la primera sola es
+propaganda.
+
+En la tabla de calibración, el aviso va **antes** de la tabla y no después: con
+~370 partidos por tramo no se detecta un desajuste menor de ±4,6 puntos
+porcentuales, y decirlo primero es lo que impide leer la ondulación como
+información.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:

@@ -6,6 +6,7 @@ const enlaces = [
   { to: '/clasificacion', label: 'Clasificación' },
   { to: '/comparar', label: 'Comparar' },
   { to: '/tendencias', label: 'Al alza y en declive' },
+  { to: '/pronostico', label: 'Fuerza y pronóstico' },
 ]
 
 export function Layout() {

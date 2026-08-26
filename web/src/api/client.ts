@@ -80,6 +80,32 @@ export const api = {
     get<TeamSplits>(`/teams/${id}/splits`, {
       dimension, stat, ...(seasons?.length ? { seasons: seasons.join(',') } : {}),
     }),
+  // --- Fuerza de equipo y pronóstico ---
+  ratings: (season?: string) =>
+    get<RatingsResponse>('/ratings', season ? { season } : {}),
+  backtest: (season?: string) =>
+    get<Backtest>('/model/backtest', season ? { season } : {}),
+  predict: (p: {
+    home: number
+    away: number
+    season?: string
+    neutral?: boolean
+    rest_home?: number
+    rest_away?: number
+    b2b_home?: boolean
+    b2b_away?: boolean
+  }) =>
+    get<Prediction>('/predict', {
+      home: p.home,
+      away: p.away,
+      ...(p.season ? { season: p.season } : {}),
+      ...(p.neutral ? { neutral: 'true' } : {}),
+      ...(p.rest_home !== undefined ? { rest_home: p.rest_home } : {}),
+      ...(p.rest_away !== undefined ? { rest_away: p.rest_away } : {}),
+      ...(p.b2b_home ? { b2b_home: 'true' } : {}),
+      ...(p.b2b_away ? { b2b_away: 'true' } : {}),
+    }),
+
   teamCatalog: () => get<{ stats: { value: string; label: string }[] }>('/team-catalog'),
 
   // --- Partido ---
