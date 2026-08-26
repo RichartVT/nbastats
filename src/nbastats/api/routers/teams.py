@@ -19,14 +19,20 @@ from nbastats.analysis.trends import analyze_trend, rolling_mean
 from nbastats.api import team_queries as tq
 from nbastats.api.catalog import DIMENSIONS, Dimension
 from nbastats.api.schemas import (
+    BacktestOut,
     GameTypeOut,
     HeadToHeadOut,
+    PredictionOut,
+    RatingsOut,
     RosterEntryOut,
     SplitOut,
     StandingOut,
+    TeamCatalogOut,
     TeamGameOut,
     TeamOut,
+    TeamSplitsOut,
     TeamSummaryOut,
+    TeamTrendOut,
 )
 from nbastats.db.session import get_db
 
@@ -153,7 +159,7 @@ def head_to_head(
 # =========================================================================
 
 
-@router.get("/teams/{team_id}/trend", tags=["análisis"])
+@router.get("/teams/{team_id}/trend", response_model=TeamTrendOut, tags=["análisis"])
 def team_trend(
     team_id: int,
     stat: str = Query("net_rating"),
@@ -203,7 +209,7 @@ def team_trend(
     }
 
 
-@router.get("/teams/{team_id}/splits", tags=["análisis"])
+@router.get("/teams/{team_id}/splits", response_model=TeamSplitsOut, tags=["análisis"])
 def team_splits(
     team_id: int,
     dimension: Dimension = Query(Dimension.HOME_AWAY),
@@ -247,7 +253,7 @@ def team_splits(
     }
 
 
-@router.get("/team-catalog", tags=["meta"])
+@router.get("/team-catalog", response_model=TeamCatalogOut, tags=["meta"])
 def team_catalog() -> dict:
     """Estadísticas de equipo consultables."""
     return {
@@ -263,7 +269,7 @@ def team_catalog() -> dict:
 # =========================================================================
 
 
-@router.get("/ratings", tags=["pronóstico"])
+@router.get("/ratings", response_model=RatingsOut, tags=["pronóstico"])
 def ratings(season: str | None = Query(None), db: Session = Depends(get_db)) -> dict:
     """Los 30 equipos por fuerza, ajustada por la calidad de sus rivales.
 
@@ -273,8 +279,29 @@ def ratings(season: str | None = Query(None), db: Session = Depends(get_db)) -> 
     filas = tq.get_ratings(db, season)
     if not filas:
         raise HTTPException(404, "No hay ratings calculados. Corre `nbastats build-ratings`.")
+
+    # CUÁNDO SE CALCULÓ, Y CUÁL ES LA ÚLTIMA TEMPORADA QUE HAY.
+    #
+    # Sin esto un rating de hace ocho meses y uno de anoche se ven idénticos.
+    # Las consultas resuelven la temporada con `COALESCE(:season, MAX(...))`, así
+    # que al entrar una temporada nueva esta respuesta seguiría dando la anterior
+    # sin decir nada. `latest_season` es la de los PARTIDOS cargados: si no
+    # coincide con la de los ratings, están desfasados y hay que poder verlo.
+    corrida = tq.get_model_run(db, filas[0]["season_id"])
+    ajustado = corrida["fitted_at"] if corrida else None
+    frescura = tq.count_games_since(db, ajustado)
+
     return {
         "season": filas[0]["season_id"],
+        "latest_loaded_season": frescura["latest_season"],
+        "last_game_date": frescura["last_game_date"],
+        # Desfasado = hay partidos jugados después del ajuste. Cubre las dos
+        # formas de quedarse viejo: que entre una temporada nueva, y que
+        # simplemente lleve semanas sin recalcularse.
+        "is_stale": ajustado is None or frescura["games_since"] > 0,
+        "games_since_fit": frescura["games_since"],
+        "fitted_at": ajustado,
+        "train_games": corrida["train_games"] if corrida else None,
         "home_advantage_margin": round(2 * float(filas[0]["home_advantage"]), 2),
         "league_mean": round(float(filas[0]["league_mean"]), 2),
         "note": (
@@ -296,7 +323,7 @@ def ratings(season: str | None = Query(None), db: Session = Depends(get_db)) -> 
     }
 
 
-@router.get("/predict", tags=["pronóstico"])
+@router.get("/predict", response_model=PredictionOut, tags=["pronóstico"])
 def predict(
     home: int = Query(..., description="Equipo local"),
     away: int = Query(..., description="Equipo visitante"),
@@ -463,7 +490,7 @@ def predict(
     }
 
 
-@router.get("/model/backtest", tags=["pronóstico"])
+@router.get("/model/backtest", response_model=BacktestOut, tags=["pronóstico"])
 def backtest(season: str | None = Query(None), db: Session = Depends(get_db)) -> dict:
     """Qué tal predice el modelo, medido fuera de muestra.
 

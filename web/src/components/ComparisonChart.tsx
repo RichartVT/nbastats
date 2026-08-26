@@ -1,6 +1,7 @@
 import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
+import { COLORES_SERIE } from '../lib/colors'
 import type { Trend } from '../api/types'
 import { fmtStat, isPctStat } from '../lib/format'
 
@@ -28,13 +29,6 @@ export const MAX_JUGADORES = 4
 // dura ~4 meses y el All-Star apenas una semana, así que 40 separa lo uno de lo
 // otro sin fragmentar la temporada.
 const DIAS_DE_PARON = 40
-
-export const COLORES_SERIE = [
-  'var(--series-1)',
-  'var(--series-2)',
-  'var(--series-3)',
-  'var(--series-4)',
-] as const
 
 export function ComparisonChart({ trends }: { trends: Trend[] }) {
   const conDatos = trends.filter((t) => t.series.length > 0)

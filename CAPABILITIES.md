@@ -186,6 +186,13 @@ triples se estabiliza en **8 partidos**; que esos triples entren necesita **150*
 De dónde salen los puntos —pintura, contraataque, tras pérdida, segunda
 oportunidad— resulta ser identidad y no ruido: entre k=6,9 y k=15,2.
 
+**Cuándo se calcularon los ratings, y si están desfasados**
+`/ratings` devuelve `fitted_at`, `last_game_date` y `games_since_fit`. Desfasado
+no significa "la temporada no coincide" sino **"hay partidos jugados después del
+último ajuste"**, que cubre tanto que entre una temporada nueva como que lleve
+semanas sin recalcularse. Antes no había forma de distinguir unos ratings de
+anoche de unos de hace ocho meses.
+
 ## 2. Límite A — estructural: lo que NO se puede preguntar
 
 Todo lo de esta lista necesita **play-by-play o datos de tiro**, que hoy no
@@ -400,12 +407,12 @@ Un modelo de ratings ajustados por rival, con probabilidad calibrada. Está en
 `/pronostico`, con el simulador, la tabla de fuerza y la validación en la misma
 pantalla — a propósito: quien mire una probabilidad tiene su calibración
 delante. Sobre
-**4.910 partidos fuera de muestra**, con los ratings reajustados por fecha y el
+**4.906 partidos fuera de muestra**, con los ratings reajustados por fecha y el
 modelo entrenado solo con temporadas anteriores:
 
 | Métrica | Modelo | Siempre local | Mejor récord |
 |---|---|---|---|
-| Acierto | **65,7 %** | 54,6 % | 63,4 % |
+| Acierto | **65,8 %** | 54,6 % | 63,4 % |
 | Brier | **0,213** | 0,248 | — |
 | Log-loss | **0,615** | 0,689 | — |
 

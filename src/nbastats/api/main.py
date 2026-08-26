@@ -65,6 +65,7 @@ from nbastats.api.schemas import (
     AbsenceIndexOut,
     AbsentPlayerOut,
     GameDetailOut,
+    GameExpectedOut,
     GameLogEntryOut,
     GameTypeOut,
     LeaderOut,
@@ -82,6 +83,7 @@ from nbastats.api.schemas import (
     RecentGameOut,
     SplitOut,
     SplitsResponse,
+    StabilityOut,
     TeamBoxScoreOut,
     TrendOut,
 )
@@ -126,6 +128,7 @@ def catalog(db: Session = Depends(get_db)) -> dict:
     """
     return {
         "seasons": q.list_seasons(db),
+        "counts": q.dataset_counts(db),
         "player_filters": {
             "statuses": [
                 {"value": s.value, "label": PLAYER_STATUS_LABELS[s]}
@@ -682,7 +685,7 @@ def leaders_trending(
 _PRIOR_INTENTOS = {"fg2": 950.0, "fg3": 1400.0, "ft": 400.0}
 
 
-@app.get("/games/{game_id}/expected", tags=["partido"])
+@app.get("/games/{game_id}/expected", response_model=GameExpectedOut, tags=["partido"])
 def get_game_expected(game_id: str, db: Session = Depends(get_db)) -> dict:
     """De dónde salieron los puntos: volumen contra acierto.
 
@@ -862,7 +865,7 @@ def _valor(f: dict, clave: str) -> float | None:
     return None if v is None else float(v)
 
 
-@app.get("/stability", tags=["análisis"])
+@app.get("/stability", response_model=StabilityOut, tags=["análisis"])
 def get_stability(
     season: str | None = Query(None, description="Vacío = todas las cargadas"),
     db: Session = Depends(get_db),

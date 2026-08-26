@@ -381,6 +381,31 @@ export function ForecastPage() {
         <p className="mt-1 max-w-3xl text-sm" style={{ color: 'var(--text-secondary)' }}>
           {ratings.data.note}
         </p>
+        {/* Cuándo se calculó. Sin esto, unos ratings de hace ocho meses y unos de
+            anoche se ven exactamente igual. */}
+        {ratings.data.is_stale ? (
+          <div
+            className="mt-2 rounded-lg px-3 py-2 text-xs"
+            style={{
+              background: 'color-mix(in srgb, var(--status-warning) 10%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--status-warning) 35%, transparent)',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <strong style={{ color: 'var(--status-warning)' }}>Ratings desfasados.</strong> Son de{' '}
+            {ratings.data.season} y desde entonces se han jugado{' '}
+            {ratings.data.games_since_fit.toLocaleString('es-ES')} partidos
+            {ratings.data.latest_loaded_season !== ratings.data.season &&
+              ` (ya hay datos de ${ratings.data.latest_loaded_season})`}
+            . Se actualizan con <code>nbastats build-ratings</code>.
+          </div>
+        ) : (
+          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+            Calculados el {new Date(ratings.data.fitted_at ?? '').toLocaleDateString('es-ES')} con
+            todos los partidos hasta el{' '}
+            {new Date(ratings.data.last_game_date ?? '').toLocaleDateString('es-ES')}.
+          </p>
+        )}
       </div>
 
       {/* --- Simulador --- */}

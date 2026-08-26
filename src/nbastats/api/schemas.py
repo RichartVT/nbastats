@@ -719,3 +719,256 @@ class GameDetailOut(BaseModel):
 
     home: TeamBoxScoreOut
     away: TeamBoxScoreOut
+
+
+# =========================================================================
+# Análisis de equipo, pronóstico y estabilidad
+#
+# Estos ocho endpoints construían su `dict` a mano y no declaraban
+# `response_model`. Los tipos de TypeScript se escribieron para casar con ellos,
+# que es una divergencia esperando a ocurrir: cambiar una clave en Python no
+# rompía nada hasta que alguien abría la pantalla. Con el modelo declarado,
+# FastAPI valida la salida y el contrato vuelve a estar en `schemas.py`.
+# =========================================================================
+
+
+class TeamTrendOut(BaseModel):
+    """Igual que `TrendOut` pero para un equipo: cambia de quién se habla."""
+
+    team_id: int
+    team_name: str
+    stat: str
+    stat_label: str
+    n: int
+    direction: TrendDirection
+    reliability: Reliability
+    slope_per_season: float | None = None
+    ci95_low: float | None = None
+    ci95_high: float | None = None
+    r_squared: float | None = None
+    mk_p_value: float | None = None
+    tau: float | None = None
+    change_points: list[int] = Field(default_factory=list)
+    note: str
+    series: list[float] = Field(default_factory=list)
+    rolling: list[float | None] = Field(default_factory=list)
+    dates: list[dt.date] = Field(default_factory=list)
+
+
+class TeamSplitsOut(BaseModel):
+    team_id: int
+    team_name: str
+    stat: str
+    stat_label: str
+    dimension: str
+    dimension_label: str
+    total_games: int
+    splits: list[SplitOut] = Field(default_factory=list)
+    caveat: str
+    any_distinguishable: bool
+
+
+class CatalogOptionOut(BaseModel):
+    value: str
+    label: str
+
+
+class TeamCatalogOut(BaseModel):
+    stats: list[CatalogOptionOut] = Field(default_factory=list)
+
+
+class TeamRatingOut(BaseModel):
+    team_id: int
+    abbreviation: str
+    full_name: str
+    conference: str | None = None
+    offense: float
+    defense: float = Field(description="POSITIVO = buena defensa")
+    net: float
+    games: int
+
+
+class RatingsOut(BaseModel):
+    season: str
+    latest_loaded_season: str | None = None
+    last_game_date: dt.date | None = None
+    is_stale: bool = Field(
+        description="Hay partidos jugados DESPUÉS del último ajuste del modelo"
+    )
+    games_since_fit: int
+    fitted_at: dt.datetime | None = None
+    train_games: int | None = None
+    home_advantage_margin: float
+    league_mean: float
+    note: str
+    teams: list[TeamRatingOut] = Field(default_factory=list)
+
+
+class PredictionComponentOut(BaseModel):
+    key: str
+    label: str
+    points: float = Field(description="Sin redondear: los componentes suman el margen")
+
+
+class PredictionTeamOut(BaseModel):
+    team_id: int
+    abbreviation: str
+    net: float
+
+
+class AbsenceAdjustmentOut(BaseModel):
+    """Fuera del modelo calibrado, y por eso va en su propio bloque."""
+
+    home_minutes: float
+    away_minutes: float
+    margin_shift: float
+    adjusted_margin: float
+    adjusted_prob: float
+    points_per_minute: float
+    note: str
+
+
+class PredictionOut(BaseModel):
+    home: PredictionTeamOut
+    away: PredictionTeamOut
+    season: str
+    model_version: str
+    fitted_at: dt.datetime | None = None
+    train_games: int
+    home_win_prob: float
+    prob_logit: float
+    prob_margin: float
+    expected_margin: float
+    margin_ci95: list[float] = Field(default_factory=list)
+    margin_sigma: float
+    components: list[PredictionComponentOut] = Field(default_factory=list)
+    absence_adjustment: AbsenceAdjustmentOut | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CalibrationBinOut(BaseModel):
+    low: float
+    high: float
+    n: int
+    predicted: float
+    observed: float
+    ci95_low: float
+    ci95_high: float
+    calibrated: bool
+
+
+class CalibrationOut(BaseModel):
+    slope: float | None = None
+    intercept: float | None = None
+    ece: float
+    ece_noise_floor: float = Field(
+        description="ECE esperado bajo calibración PERFECTA. No es cero."
+    )
+    within_noise: bool
+    note: str
+    bins: list[CalibrationBinOut] = Field(default_factory=list)
+
+
+class BacktestBaselinesOut(BaseModel):
+    always_home: float
+    always_home_brier: float
+    always_home_log_loss: float
+    better_record: float
+
+
+class BacktestOut(BaseModel):
+    n: int
+    seasons: list[str] = Field(default_factory=list)
+    accuracy: float
+    brier: float
+    log_loss: float
+    brier_skill_score: float
+    baselines: BacktestBaselinesOut
+    calibration: CalibrationOut
+    disagreements: int = Field(description="Partidos donde las dos rutas discrepan")
+    caveat: str
+
+
+class ShootingNormsOut(BaseModel):
+    fg2_pct: float
+    fg3_pct: float
+    ft_pct: float
+    n_games: int = Field(description="Partidos de los que sale la norma, SIN este")
+
+
+class FourFactorsOut(BaseModel):
+    efg_pct: float | None = None
+    tov_rate: float | None = None
+    oreb_pct: float | None = None
+    ft_rate: float | None = None
+    possessions: float
+
+
+class ExpectedSideOut(BaseModel):
+    team_id: int
+    abbreviation: str
+    full_name: str
+    actual_points: int
+    expected_points: float
+    luck_points: float
+    norms: ShootingNormsOut
+    four_factors: FourFactorsOut
+
+
+class LuckComponentOut(BaseModel):
+    key: str
+    label: str
+    points: float = Field(description="Positivo = empujó el marcador hacia el LOCAL")
+    detail: str
+
+
+class ReliabilityNoteOut(BaseModel):
+    level: Reliability
+    n_games: int
+
+
+class GameExpectedOut(BaseModel):
+    game_id: str
+    season_id: str
+    actual_margin: int
+    expected_margin: float
+    swing: float
+    unexplained_pts: float = Field(
+        description="Tiene que ser 0. Se expone para que un fallo no viva callado."
+    )
+    components: list[LuckComponentOut] = Field(default_factory=list)
+    home: ExpectedSideOut
+    away: ExpectedSideOut
+    reliability: ReliabilityNoteOut
+    note: str
+
+
+class StabilityComponentOut(BaseModel):
+    key: str
+    label: str
+    family: str
+    k_games: float | None = Field(
+        None, description="Partidos para que la media propia pese la mitad"
+    )
+    stability: str
+    stability_label: str
+    note: str
+    reliability: Reliability
+    n_units: int
+    mean_games: float
+    tau_squared: float
+    within_var: float
+    weight_41: float
+    weight_82: float
+
+
+class StabilityBoundariesOut(BaseModel):
+    skill_max_k: int
+    mixed_max_k: int
+
+
+class StabilityOut(BaseModel):
+    season: str | None = None
+    components: list[StabilityComponentOut] = Field(default_factory=list)
+    boundaries: StabilityBoundariesOut
+    note: str

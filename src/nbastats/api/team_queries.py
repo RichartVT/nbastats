@@ -366,3 +366,34 @@ def get_model_run(session: Session, season: str | None = None) -> dict | None:
     """)
     fila = session.execute(sql, {"season": season}).mappings().first()
     return dict(fila) if fila else None
+
+
+def count_games_since(session: Session, momento) -> dict:
+    """Partidos jugados DESPUÉS de un instante dado, y el último de todos.
+
+    Es la definición útil de "los ratings están desfasados", y es mejor que
+    comparar temporadas: detecta tanto que ha entrado una temporada nueva como
+    que hace dos semanas que no se reajusta. Las dos cosas producen el mismo
+    síntoma —números viejos servidos como actuales— y ninguna da error.
+
+    Se lee de `games` y no de `mv_player_season` porque la vista materializada
+    solo ve lo que había en el último `refresh`, y aquí la pregunta es
+    justamente si hay algo más nuevo que lo último procesado.
+    """
+    fila = session.execute(
+        text("""
+            SELECT MAX(game_date_local) AS ultimo,
+                   COUNT(*) FILTER (
+                       WHERE CAST(:momento AS timestamptz) IS NULL
+                          OR game_date_local > CAST(:momento AS timestamptz)::date
+                   ) AS posteriores,
+                   MAX(season_id) AS ultima_temporada
+            FROM games
+        """),
+        {"momento": momento},
+    ).mappings().one()
+    return {
+        "last_game_date": fila["ultimo"],
+        "games_since": int(fila["posteriores"] or 0),
+        "latest_season": fila["ultima_temporada"],
+    }

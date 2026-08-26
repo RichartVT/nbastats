@@ -12,14 +12,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     # --- Ingesta ---
     "nba-api>=1.7",
-    "httpx>=0.27",
     "tenacity>=9.0",
     "typer>=0.15",
     "rich>=13.9",
     # --- Procesamiento ---
-    "polars>=1.17",
-    "pyarrow>=18.0",
-    "duckdb>=1.1",
     "numpy>=2.1",
     "scipy>=1.14",
     "statsmodels>=0.14",

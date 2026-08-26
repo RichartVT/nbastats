@@ -4,14 +4,14 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Trend } from '../api/types'
 import {
-  COLORES_SERIE,
   ComparisonChart,
   MAX_JUGADORES,
 } from '../components/ComparisonChart'
+import { COLORES_SERIE } from '../lib/colors'
 import { Card, ErrorBox, Loading, Select } from '../components/Layout'
 import { PlayerPhoto } from '../components/Media'
 import { ReliabilityBadge } from '../components/Reliability'
-import { fmt, fmtSigned, fmtStat } from '../lib/format'
+import { fmtSigned, fmtStat } from '../lib/format'
 
 const DIRECCION: Record<string, { texto: string; color: string; icono: string }> = {
   alza: { texto: 'Al alza', color: 'var(--status-good)', icono: '▲' },
@@ -268,5 +268,3 @@ export function ComparePage() {
     </div>
   )
 }
-
-export { fmt }

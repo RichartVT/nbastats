@@ -571,7 +571,14 @@ export interface CatalogOption {
   label: string
 }
 
+export interface DatasetCounts {
+  games: number
+  seasons: number
+  last_game_date: string | null
+}
+
 export interface Catalog {
+  counts: DatasetCounts
   stats: CatalogStat[]
   dimensions: CatalogDimension[]
   /** De la más reciente a la más antigua. Sale de los datos cargados, no de
@@ -613,6 +620,16 @@ export interface TeamRating {
 
 export interface RatingsResponse {
   season: string
+  /** La temporada más reciente que tiene partidos cargados. Si no coincide con
+   *  `season`, los ratings son de una temporada anterior. */
+  latest_loaded_season: string | null
+  last_game_date: string | null
+  /** Hay partidos jugados DESPUÉS del último ajuste. Cubre tanto que haya
+   *  entrado una temporada nueva como que lleve semanas sin recalcularse. */
+  is_stale: boolean
+  games_since_fit: number
+  fitted_at: string | null
+  train_games: number | null
   /** Ventaja de jugar en casa, en puntos de MARGEN (el doble del coeficiente). */
   home_advantage_margin: number
   league_mean: number

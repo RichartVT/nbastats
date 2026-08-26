@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { ComparePage } from './pages/ComparePage'
+import { NotFoundPage } from './pages/NotFoundPage'
 import { StabilityPage } from './pages/StabilityPage'
 import { ForecastPage } from './pages/ForecastPage'
 import { GamePage } from './pages/GamePage'
@@ -40,6 +41,9 @@ export default function App() {
             <Route path="/tendencias" element={<LeadersPage />} />
             <Route path="/pronostico" element={<ForecastPage />} />
             <Route path="/que-se-repite" element={<StabilityPage />} />
+            {/* Comodín al final: sin esto, cualquier URL desconocida pintaba
+                una página en blanco. */}
+            <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

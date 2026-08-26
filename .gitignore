@@ -29,3 +29,6 @@ web/.vite/
 
 # Configuración personal de Claude Code (settings.json sí se versiona)
 .claude/settings.local.json
+
+# Registros de las descargas largas (ingest-pbp y compañía).
+*.log

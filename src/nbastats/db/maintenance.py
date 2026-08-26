@@ -23,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 SQL_DIR = Path(__file__).parent / "sql"
 
-# En orden de dependencia: cada una lee de la anterior.
+# En orden de dependencia. Las tres primeras SÍ encadenan —`mv_player_season`
+# lee de `mv_player_game_rates`, y `mv_league_season_baselines` de aquélla— pero
+# `mv_team_game_rates` NO: lee directamente de `team_game_stats`. El orden le da
+# igual; está la última porque es la que menos depende de nada.
 MATERIALIZED_VIEWS = (
     "mv_player_game_rates",
     "mv_player_season",

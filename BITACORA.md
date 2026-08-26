@@ -40,11 +40,12 @@ Documentos hermanos:
 | 18 | Prior entre temporadas + triples, historial y escudos | ✅ Completa — 4.910 partidos con pronóstico |
 | 19 | Índice de ausencias | ✅ Completa — 21,4 pp de recorrido, 13.204/13.204 |
 | 20 | `/expected` y `/stability` en pantalla | ✅ Completa — residuo 3,2e-14 |
+| 21 | Deuda de mantenimiento | ✅ Completa — `daily` completo, obsolescencia visible, oxlint a cero |
 
 **Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
 marcador por periodo · 1.030 jugadores con biografía completa · 5 temporadas
-(2021-22 → 2025-26) · 492 tests · 15 migraciones · **844 MB**.
+(2021-22 → 2025-26) · 516 tests · 15 migraciones · **844 MB**.
 
 ---
 
@@ -1585,6 +1586,149 @@ anotada en la auditoría. Sacado fuera.
 
 ---
 
+## Fase 21 — Deuda de mantenimiento, antes de que entre la 2026-27
+
+El punto que tenía fecha. Nada de esto costó una petición a la NBA.
+
+### Lo que se iba a desfasar solo
+
+`daily` llamaba a siete cosas y **no a `ingest-pbp` ni a `build-ratings`**. Como
+las consultas resuelven la temporada con `COALESCE(:season, MAX(...))` y no había
+ninguna marca de obsolescencia, el primer día de la 2026-27 `/ratings` y
+`/predict` habrían servido la 2025-26 **como si fuera la actual**, sin error y
+sin aviso. El mismo tipo de fallo silencioso que el de la fase 17.
+
+Los dos pasos están añadidos. El de play-by-play solo pide los partidos que
+faltan —comprobado: con todo cargado devuelve `{pedidos: 0}` sin tocar la red— y
+`build-ratings` no pide nada, es cálculo.
+
+**Y ahora se puede VER si están viejos.** `/ratings` devuelve `fitted_at`,
+`last_game_date`, `games_since_fit` e `is_stale`. La definición de desfasado no
+es "la temporada no coincide" sino **"hay partidos jugados después del ajuste"**,
+que cubre las dos formas de quedarse viejo: que entre una temporada nueva, y que
+simplemente lleve semanas sin recalcularse.
+
+Comprobado en los dos sentidos, insertando un partido de la 2026-27 en una
+transacción que se deshace: al día no avisa; con un partido nuevo sin reajustar,
+`is_stale=true` y la pantalla lo dice.
+
+### Las trece columnas que la vista no exponía
+
+`mv_team_game_rates` no tenía `wins_before`, `losses_before`, `seconds_played`,
+las ocho de origen de los puntos, ni `absent_minutes`/`absent_players`. No era
+cosmético: `queries.py` bajaba a la tabla base para el récord, y la consulta de
+`/stability` de la fase 20 tuvo que hacer lo mismo. La vista existe para evitar
+justo eso.
+
+Añadidas, y las dos consultas vueltas a apuntar a la vista. Comprobado:
+13.204 filas y **0 discrepancias** contra la tabla base. `/stability` sigue dando
+los mismos `k` (3,0 · 5,3 · 6,9 … 47,0 · 150,5).
+
+De paso, el comentario de `maintenance.py` decía "en orden de dependencia: cada
+una lee de la anterior". Es cierto para las tres primeras; `mv_team_game_rates`
+lee de `team_game_stats`, una tabla base. Corregido.
+
+### Contradicciones con el propio contrato
+
+`TEMPORADAS = ['2025-26', …]` estaba escrito a mano en dos pantallas mientras el
+docstring de `/catalog` decía literalmente que eso se desfasa. `TeamPage` **ya
+pedía `/catalog`** y le ignoraba el campo `seasons`. Y `Layout` mostraba
+"5 temporadas · 6.602 partidos" como texto fijo.
+
+Las tres leen ahora del catálogo, que devuelve un bloque `counts` nuevo.
+
+### Muerto fuera
+
+Verificado con cero usos: `kaggle_username`, `kaggle_key` y
+`backfill_window_days` en `config.py` (y sus líneas en `.env`); `polars`,
+`pyarrow`, `duckdb` y `httpx` en `pyproject.toml` — **cero imports en todo el
+repo**; `fmtRecord`; los dos `export { fmt }` sueltos; y `pbp.log`, con `*.log`
+añadido a `.gitignore`.
+
+**Corrección a la auditoría:** daba por muertos `api.headToHead` y
+`/teams/{a}/vs/{b}`, y ya no lo están — se cablearon en la fase 18b.
+
+Con eso, `oxlint` pasa de seis advertencias a **cero**. La última exigía mover
+`COLORES_SERIE` fuera del fichero del gráfico, y tiene consecuencia real: un
+módulo que exporta componentes *y* constantes rompe el fast refresh.
+
+### Robustez
+
+- **Ruta 404.** Antes, cualquier URL desconocida pintaba una página **en blanco**:
+  sin error, sin navegación y sin forma de saber si la aplicación se había roto.
+- **`response_model` en los ocho endpoints que no lo tenían.** Construían su
+  `dict` a mano y los tipos de TypeScript se escribieron para casar, que es una
+  divergencia esperando a ocurrir. **La validación cazó un error en cuanto se
+  activó**: yo había puesto `detail` como obligatorio en los componentes de
+  `/predict`, y ahí no existe. Exactamente para eso sirve.
+- **Test de `temporada_actual`**, que era lógica sin verificar **y es la que
+  decide qué temporada carga `daily`**. Si el corte de octubre se equivoca, la
+  actualización diaria recarga la temporada equivocada durante semanas sin dar un
+  error. 14 casos: el corte del 30 de septiembre al 1 de octubre, diciembre
+  contra enero, el cambio de década (2029-30, no "2029-3"), el de siglo
+  (2099-00), un bisiesto, y que 1.200 días consecutivos nunca retrocedan.
+
+### La duplicación convertida en salvaguarda
+
+`analysis/rates.py` (170 líneas) calcula per-36, TS%, eFG% y Game Score en
+Python; las vistas los calculan otra vez en SQL; **y la API solo usa las de
+SQL**. Nada garantizaba que coincidieran.
+
+Ahora hay un test que las cruza — y **encontró algo en la primera pasada**. TS%
+y eFG% fallaban por exactamente 0,0005, siempre. No era un error de fórmula:
+**a nivel de partido esos valores no los calcula nadie nuestro**, vienen de
+`player_game_advanced`, o sea de la NBA, con 3 decimales. Son dos preguntas
+distintas y yo las había mezclado en un solo test con una sola tolerancia:
+
+| | Qué compara | Desviación |
+|---|---|---|
+| Temporada | Python contra **SQL** | 5e-5 = redondeo de `numeric(6,4)` |
+| Partido | Python contra **la NBA** | 5e-4 = redondeo de sus 3 decimales |
+
+La segunda también vale la pena, pero es otra cosa: confirma que nuestra fórmula
+es la misma que la de la liga. Separadas, las ocho comprobaciones pasan, y el
+test exige que la peor diferencia sea **exactamente** el redondeo esperado — si
+fuera menor, el dato no vendría de donde se cree.
+
+El test se salta limpiamente sin base de datos (comprobado), para no romper la
+propiedad de que los otros ~500 corren en dos segundos en cualquier máquina.
+
+### El fallo que apareció al correr `daily` de verdad
+
+La verificación pedía ejecutar `daily` entero y comprobar que es idempotente. No
+lo fue, y el motivo es interesante.
+
+`daily` corrió `enrich`, que marcó como **sede neutral** cuatro partidos de
+2023-24 que no lo estaban: las dos semifinales de la Copa NBA en Las Vegas
+(LAL-NOP y MIL-IND, 7 de diciembre), el de París (CLE-BKN) y el de México
+(ORL-ATL). El corrector hizo bien su trabajo — el modelo excluye las sedes
+neutrales a propósito, porque la localía es una de sus variables.
+
+Pero **sus predicciones viejas se quedaron en la tabla**. `upsert` escribe y
+actualiza; no borra lo que deja de producirse. Resultado: `game_predictions`
+tenía 4.910 filas cuando la corrida había generado 4.906, y esas cuatro
+sobrantes llevaban coeficientes de otra corrida. `/model/backtest` las habría
+contado.
+
+Arreglado borrando, tras cada pasada, lo que tenga un `fitted_at` anterior a
+ella. Y con dos tests que lo vigilan: que ninguna predicción sea de un partido
+que el modelo excluye, y que todas compartan corrida — si conviven dos
+`fitted_at`, unas se calcularon con otros coeficientes.
+
+**Las métricas cambian un pelo por esto, y el cambio es una corrección**: 65,76 %
+sobre 4.906 partidos, en vez del 65,70 % sobre 4.910. No se movió el modelo; se
+quitaron cuatro partidos que nunca debieron estar.
+
+### Y el SQL fuera de `cli.py`
+
+`build-ratings` eran 120 líneas con su consulta embebida, mientras todos los
+demás comandos delegan en un módulo. Ahora vive en `ratings_job.py`, que además
+es lo que permite que `daily` lo llame: un comando de Typer no se puede invocar
+limpiamente desde otro. Reajustar tras el refactor da **exactamente** las mismas
+métricas, que es la comprobación de que solo se movió de sitio.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -1601,24 +1745,17 @@ publicar los resultados negativos (la curva de edad, el motor de resultado
 esperado) es un activo. Lo que hay no está mal construido; lo que sobra es
 **distancia entre lo construido y lo cableado**.
 
-Orden acordado para lo siguiente. El punto 1 **no cuesta una sola petición a la NBA**:
+Orden acordado para lo siguiente. Los puntos 1 y 3 **no cuestan una sola petición a la NBA**:
 
-1. **Deuda de mantenimiento, antes de que entre la 2026-27.** `daily` no
-   actualiza `play_by_play`, `team_season_ratings` ni `game_predictions`: en
-   cuanto empiece la temporada nueva, la aplicación servirá ratings viejos **como
-   si fueran actuales**. Además: las 8 columnas de origen de los puntos no las
-   lee nadie, `TEMPORADAS` está a mano en dos pantallas mientras `/catalog`
-   existe justo para eso, no hay ruta 404, y sobran `polars`/`pyarrow`/`duckdb`/
-   `httpx` y tres claves de configuración muertas.
-2. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
+1. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
    distancia**. Es la única vía con mecanismo real para rescatar el motor de
    resultado esperado, separando la *decisión* de tiro (estable, k=3) del
    *acierto* (ruido). Se propone con **la prueba fijada de antemano**, la misma
    que ya falló una vez: si a k=10 y k=20 no gana, se publica el negativo y se
    cierra la línea.
-3. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
+2. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
    `games_played` en la misma migración, que es la trampa anotada en la fase 10.
-4. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
+3. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
    pregunta más valiosa del proyecto: distinguir "está en declive" de "tiene 34
    años y le pasa lo que a todos".
 

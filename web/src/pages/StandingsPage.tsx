@@ -7,7 +7,6 @@ import { Card, ErrorBox, Loading, Select } from '../components/Layout'
 import { TeamLogo } from '../components/Media'
 import { fmt, fmtSigned } from '../lib/format'
 
-const TEMPORADAS = ['2025-26', '2024-25', '2023-24', '2022-23', '2021-22']
 
 /** Racha como texto con signo: +4 son cuatro victorias seguidas. */
 function racha(n: number | null): string {
@@ -105,10 +104,18 @@ function TablaConferencia({ titulo, filas }: { titulo: string; filas: Standing[]
 
 
 export function StandingsPage() {
-  const [season, setSeason] = useState(TEMPORADAS[0])
+  // Las temporadas salen de `/catalog`, no de una constante: es literalmente lo
+  // que el docstring de ese endpoint dice que hay que hacer, y esta pantalla
+  // llevaba la lista escrita a mano.
+  const catalogo = useQuery({ queryKey: ['catalog'], queryFn: api.catalog })
+  const temporadas = catalogo.data?.seasons ?? []
+  const [elegida, setSeason] = useState('')
+  const season = elegida || temporadas[0] || ''
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['standings', season],
     queryFn: () => api.standings(season),
+    enabled: Boolean(season),
     placeholderData: (prev) => prev,
   })
 
@@ -125,7 +132,7 @@ export function StandingsPage() {
         label="Temporada"
         value={season}
         onChange={setSeason}
-        options={TEMPORADAS.map((t) => ({ value: t, label: t }))}
+        options={temporadas.map((t) => ({ value: t, label: t }))}
       />
 
       {error ? (

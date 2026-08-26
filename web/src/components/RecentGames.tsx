@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { RecentGame } from '../api/types'
-import { fmt, fmtDate } from '../lib/format'
+import { fmtDate } from '../lib/format'
 import { GameTypeBadge, TeamLogo, WinLoss } from './Media'
 
 export function RecentGames({ games }: { games: RecentGame[] }) {
@@ -99,8 +99,4 @@ export function RecentGames({ games }: { games: RecentGame[] }) {
       </p>
     </div>
   )
-}
-
-export function fmtRecord(g: RecentGame): string {
-  return `${fmt(g.pts, 0)}-${fmt(g.reb, 0)}-${fmt(g.ast, 0)}`
 }

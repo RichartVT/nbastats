@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { Card, ErrorBox, Loading } from '../components/Layout'
 import { TeamLogo } from '../components/Media'
-import { fmt, fmtSigned } from '../lib/format'
+import { fmtSigned } from '../lib/format'
 
 export function TeamsPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ['teams'], queryFn: () => api.teams() })
@@ -113,5 +113,3 @@ export function TeamsPage() {
     </div>
   )
 }
-
-export { fmt }

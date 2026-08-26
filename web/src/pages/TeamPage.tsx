@@ -8,7 +8,6 @@ import { Card, ErrorBox, Loading, Select } from '../components/Layout'
 import { PlayerPhoto, TeamLogo } from '../components/Media'
 import { fmt, fmtSigned } from '../lib/format'
 
-const TEMPORADAS = ['2025-26', '2024-25', '2023-24', '2022-23', '2021-22']
 
 function Dato({ etiqueta, valor }: { etiqueta: string; valor: string | null }) {
   if (!valor) return null
@@ -25,7 +24,11 @@ function Dato({ etiqueta, valor }: { etiqueta: string; valor: string | null }) {
 export function TeamPage() {
   const { id } = useParams()
   const teamId = Number(id)
-  const [season, setSeason] = useState(TEMPORADAS[0])
+  // Ya se pedía `/catalog` para las dimensiones y se ignoraba su `seasons`.
+  const catalogo = useQuery({ queryKey: ['catalog'], queryFn: api.catalog })
+  const temporadas = catalogo.data?.seasons ?? []
+  const [elegida, setSeason] = useState('')
+  const season = elegida || temporadas[0] || ''
   const [stat, setStat] = useState('net_rating')
   const [dimension, setDimension] = useState('home_away')
 
@@ -50,7 +53,6 @@ export function TeamPage() {
     queryKey: ['teamCatalog'],
     queryFn: api.teamCatalog,
   })
-  const catalogo = useQuery({ queryKey: ['catalog'], queryFn: api.catalog })
 
   const tendencia = useQuery({
     queryKey: ['teamTrend', teamId, stat, alcance, season],
@@ -127,7 +129,7 @@ export function TeamPage() {
         label="Temporada"
         value={season}
         onChange={setSeason}
-        options={TEMPORADAS.map((x) => ({ value: x, label: x }))}
+        options={temporadas.map((x) => ({ value: x, label: x }))}
       />
 
       {/* --- Récords desglosados --- */}

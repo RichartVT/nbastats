@@ -168,6 +168,28 @@ def list_seasons(session: Session) -> list[str]:
     return list(filas)
 
 
+def dataset_counts(session: Session) -> dict:
+    """Qué hay cargado, para que la interfaz no lo lleve escrito a mano.
+
+    `Layout.tsx` mostraba "5 temporadas · 6.602 partidos" como texto fijo, que
+    es la misma trampa que la lista de temporadas a mano: en cuanto entra una
+    temporada nueva, miente y nadie se entera.
+    """
+    f = session.execute(
+        text("""
+            SELECT COUNT(*) AS partidos,
+                   COUNT(DISTINCT season_id) AS temporadas,
+                   MAX(game_date_local) AS ultimo
+            FROM games
+        """)
+    ).mappings().one()
+    return {
+        "games": int(f["partidos"]),
+        "seasons": int(f["temporadas"]),
+        "last_game_date": f["ultimo"],
+    }
+
+
 def list_countries(session: Session) -> list[dict]:
     """Países presentes en la plantilla de jugadores, con cuántos hay de cada uno.
 
@@ -687,9 +709,9 @@ def get_recent_games(session: Session, player_id: int, limit: int = 5) -> list[d
         JOIN games g   ON g.game_id  = r.game_id
         JOIN teams tm  ON tm.team_id = r.team_id
         JOIN teams opp ON opp.team_id = r.opponent_team_id
-        JOIN team_game_stats tgs
+        JOIN mv_team_game_rates tgs
              ON tgs.game_id = r.game_id AND tgs.team_id = r.team_id
-        JOIN team_game_stats tgs_opp
+        JOIN mv_team_game_rates tgs_opp
              ON tgs_opp.game_id = r.game_id AND tgs_opp.team_id = r.opponent_team_id
         WHERE r.player_id = :pid
         ORDER BY r.game_date_local DESC, r.game_id DESC
@@ -1068,29 +1090,24 @@ def get_game_expected_inputs(session: Session, game_id: str) -> dict | None:
 def get_team_game_series(session: Session, season: str | None = None) -> list[dict]:
     """Una fila por equipo-partido con los componentes que se quieren estabilizar.
 
-    Lee de `team_game_stats` y no de `mv_team_game_rates` porque la vista no
-    expone las ocho columnas de origen de los puntos. Está anotado como deuda;
-    mientras tanto, la fuente base las tiene todas.
-
     Lo concedido sale de la fila del RIVAL en el mismo partido, no de columnas
     `opp_*`: así el volumen concedido (cuántos triples le dejas tirar) y el
     acierto concedido (si entran) quedan separados, que es justamente lo que el
     motor de resultado esperado necesita distinguir.
     """
     sql = text("""
-        SELECT t.team_id, g.season_id,
+        SELECT t.team_id, t.season_id,
                t.fga, t.fgm, t.fg3a, t.fg3m, t.fta, t.ftm,
                t.oreb, t.dreb, t.tov, t.pace,
                t.pts_paint, t.pts_fastbreak, t.pts_off_turnovers, t.pts_2nd_chance,
                o.fga AS opp_fga, o.fgm AS opp_fgm, o.fg3a AS opp_fg3a,
                o.fg3m AS opp_fg3m, o.dreb AS opp_dreb
-        FROM team_game_stats t
-        JOIN games g ON g.game_id = t.game_id
-        JOIN team_game_stats o
+        FROM mv_team_game_rates t
+        JOIN mv_team_game_rates o
           ON o.game_id = t.game_id AND o.team_id = t.opponent_team_id
-        WHERE g.season_type = 'regular'
+        WHERE t.season_type = 'regular'
           -- El cast es necesario: sin él Postgres no puede inferir el tipo
           -- del parámetro dentro de un `IS NULL`.
-          AND (CAST(:season AS text) IS NULL OR g.season_id = CAST(:season AS text))
+          AND (CAST(:season AS text) IS NULL OR t.season_id = CAST(:season AS text))
     """)
     return [dict(f) for f in session.execute(sql, {"season": season}).mappings()]

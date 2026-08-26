@@ -326,114 +326,26 @@ def build_ratings_cmd(verbose: bool = False) -> None:
     que garantiza que ningún partido vea el futuro.
     """
     _configurar_logging(verbose)
-    import datetime as dt
+    from nbastats.ratings_job import rebuild_ratings
 
-    from sqlalchemy import text as sql_text
+    m = rebuild_ratings()
+    if not m["partidos"]:
+        console.print("[yellow]No hay partidos que ajustar.[/yellow]")
+        return
 
-    from nbastats.analysis.backtest import MODEL_VERSION, GameRow, evaluate, walk_forward
-    from nbastats.analysis.calibration import (
-        brier,
-        brier_skill_score,
-        calibration_report,
-        log_loss,
-    )
-    from nbastats.db.models import GamePrediction, ModelRun, TeamSeasonRating
-    from nbastats.ingest.bulk import upsert
-
-    CONSULTA = sql_text("""
-        SELECT g.game_id, g.season_id, g.game_date_local AS fecha,
-               g.home_team_id, g.away_team_id,
-               h.won AS gano_local, h.plus_minus AS margen,
-               100.0*h.pts/NULLIF(h.possessions,0) AS local_100,
-               100.0*a.pts/NULLIF(a.possessions,0) AS visitante_100,
-               h.rest_days AS desc_local, a.rest_days AS desc_visitante,
-               h.is_back_to_back AS b2b_local, a.is_back_to_back AS b2b_visitante
-        FROM games g
-        JOIN team_game_stats h ON h.game_id=g.game_id AND h.team_id=g.home_team_id
-        JOIN team_game_stats a ON a.game_id=g.game_id AND a.team_id=g.away_team_id
-        WHERE g.season_type='regular' AND NOT g.is_neutral_site
-        ORDER BY g.game_date_local, g.game_id
-    """)
-    with session_scope() as s:
-        filas = s.execute(CONSULTA).mappings().all()
-
-    partidos = [
-        GameRow(
-            game_id=f["game_id"], season_id=f["season_id"], date=f["fecha"],
-            home_id=f["home_team_id"], away_id=f["away_team_id"],
-            home_won=bool(f["gano_local"]), margin=float(f["margen"] or 0),
-            home_pts_per_100=float(f["local_100"]) if f["local_100"] else None,
-            away_pts_per_100=float(f["visitante_100"]) if f["visitante_100"] else None,
-            home_rest=float(f["desc_local"] or 0), away_rest=float(f["desc_visitante"] or 0),
-            home_b2b=bool(f["b2b_local"]), away_b2b=bool(f["b2b_visitante"]),
-        )
-        for f in filas
-    ]
-    console.print(f"[bold]{len(partidos):,} partidos.[/bold] Ajustando por jornada…")
-
-    muestras, finales = walk_forward(partidos)
-    predicciones, modelos = evaluate(muestras)
-    ahora = dt.datetime.now(dt.UTC)
-
-    with session_scope() as sesion:
-        upsert(sesion, TeamSeasonRating, [
-            {
-                "season_id": season, "team_id": tid,
-                "offense": round(r.offense, 3), "defense": round(r.defense, 3),
-                "net": round(r.net, 3), "games": r.games,
-                "home_advantage": round(m.home_advantage, 3),
-                "league_mean": round(m.league_mean, 3),
-            }
-            for season, m in finales.items() for tid, r in m.ratings.items()
-        ], keys=["season_id", "team_id"])
-
-        # Los coeficientes ajustados, uno por temporada evaluada. Sin esto el
-        # simulador no tiene de dónde leerlos y acaba inventándoselos.
-        upsert(sesion, ModelRun, [
-            {
-                "model_version": MODEL_VERSION, "season_id": season,
-                "logit_params": m.logit_params, "margin_params": m.margin_params,
-                "sigma": round(m.sigma, 4), "train_games": m.n_train,
-                "fitted_at": ahora,
-            }
-            for season, m in modelos.items()
-        ], keys=["model_version", "season_id"])
-
-        upsert(sesion, GamePrediction, [
-            {
-                "game_id": p.game_id, "model_version": MODEL_VERSION,
-                "home_win_prob": round(p.prob, 4),
-                "expected_margin": round(p.expected_margin, 3),
-                "margin_sigma": round(p.sigma, 3),
-                "rating_diff": round(p.features.rating_diff, 3),
-                "rest_diff": round(p.features.rest_diff, 3),
-                "b2b_diff": round(p.features.b2b_diff, 3),
-                "prob_logit": round(p.prob_logit, 4),
-                "prob_margin": round(p.prob_margin, 4),
-                "train_games": p.train_games, "fitted_at": ahora,
-            }
-            for p in predicciones
-        ], keys=["game_id", "model_version"])
-
-    probs = [p.prob for p in predicciones]
-    reales = [p.home_won for p in predicciones]
-    base = sum(reales) / len(reales)
-    acierto = sum((p > 0.5) == r for p, r in zip(probs, reales, strict=True)) / len(probs)
-    inf = calibration_report(probs, reales)
-
+    console.print(f"[bold]{m['partidos']:,} partidos.[/bold]")
     console.print(
-        f"[green]{len(finales)} temporadas de ratings · {len(modelos)} modelos · "
-        f"{len(predicciones):,} predicciones guardadas[/green]"
+        f"[green]{m['temporadas']} temporadas de ratings · {m['modelos']} modelos · "
+        f"{m['predicciones']:,} predicciones guardadas[/green]"
     )
     console.print(
-        f"  acierto {100*acierto:.2f}%  ·  Brier {brier(probs, reales):.4f}  ·  "
-        f"log-loss {log_loss(probs, reales):.4f}  ·  "
-        f"BSS {brier_skill_score(probs, reales, base):.4f}"
+        f"  acierto {100*m['acierto']:.2f}%  ·  Brier {m['brier']:.4f}  ·  "
+        f"log-loss {m['log_loss']:.4f}  ·  BSS {m['bss']:.4f}"
     )
-    color = "green" if inf.within_noise else "yellow"
+    color = "green" if m["within_noise"] else "yellow"
     console.print(
-        f"[{color}]  calibración: pendiente {inf.slope:.2f}, ECE {inf.ece:.4f} "
-        f"(suelo {inf.ece_floor:.4f})[/{color}]"
+        f"[{color}]  calibración: pendiente {m['slope']:.2f}, ECE {m['ece']:.4f} "
+        f"(suelo {m['ece_floor']:.4f})[/{color}]"
     )
 
 
@@ -491,8 +403,10 @@ def daily(verbose: bool = False) -> None:
     from nbastats.ingest.bulk import ingest_seasons
     from nbastats.ingest.enrich import enrich_games
     from nbastats.ingest.periods import ingest_periods, verificar_cuadre
+    from nbastats.ingest.playbyplay import ingest_play_by_play
     from nbastats.ingest.summaries import ingest_game_summaries
     from nbastats.ingest.teams import ingest_all_team_data
+    from nbastats.ratings_job import rebuild_ratings
 
     season = temporada_actual()
     console.print(f"[bold]Temporada actual: {season}[/bold]")
@@ -518,8 +432,24 @@ def daily(verbose: bool = False) -> None:
     resumenes = ingest_game_summaries([season], only_missing=True)
     console.print(f"  {resumenes['pedidos'] - resumenes['fallidos']:,} resúmenes de partido")
 
+    # Solo los partidos sin play-by-play: ~10 en una noche, no los 6.602.
+    pbp = ingest_play_by_play([season], only_missing=True)
+    console.print(f"  {pbp['eventos']:,} eventos de play-by-play")
+
     compute_derived_columns()
     refresh_views()
+
+    # LOS RATINGS SE REAJUSTAN AQUÍ, Y NO ES OPCIONAL. Las consultas resuelven
+    # la temporada con `COALESCE(:season, MAX(...))` y no hay marca de
+    # obsolescencia: si esto no corre, el primer día de una temporada nueva
+    # `/ratings` y `/predict` servirán la anterior como si fuera la actual, sin
+    # error y sin aviso. No cuesta ninguna petición, solo cálculo.
+    m = rebuild_ratings()
+    if m["partidos"]:
+        console.print(
+            f"  ratings de {m['temporadas']} temporadas · "
+            f"{m['predicciones']:,} predicciones · acierto {100*m['acierto']:.2f}%"
+        )
 
     # El cuadre de los cuartos se comprueba en cada actualización, no solo en la
     # carga inicial: si un día la API deja de aceptar `Period`, devolvería el

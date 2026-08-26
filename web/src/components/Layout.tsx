@@ -1,4 +1,6 @@
+import { useQuery } from '@tanstack/react-query'
 import { NavLink, Outlet } from 'react-router-dom'
+import { api } from '../api/client'
 
 const enlaces = [
   { to: '/', label: 'Jugadores', end: true },
@@ -11,6 +13,12 @@ const enlaces = [
 ]
 
 export function Layout() {
+  // El contador salía de un texto fijo ("5 temporadas · 6.602 partidos"), que es
+  // la misma trampa que la lista de temporadas a mano: miente en cuanto entra
+  // una temporada nueva y nadie se entera.
+  const catalogo = useQuery({ queryKey: ['catalog'], queryFn: api.catalog })
+  const c = catalogo.data?.counts
+
   return (
     <div className="min-h-full">
       <header style={{ borderBottom: '1px solid var(--border)' }}>
@@ -34,7 +42,9 @@ export function Layout() {
             ))}
           </nav>
           <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>
-            5 temporadas · 6.602 partidos
+            {c
+              ? `${c.seasons} temporadas · ${c.games.toLocaleString('es-ES')} partidos`
+              : '\u00a0'}
           </span>
         </div>
       </header>

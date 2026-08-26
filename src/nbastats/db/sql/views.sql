@@ -274,9 +274,23 @@ SELECT
     (tgs.fg3a * 100.0 / NULLIF(tgs.possessions, 0))::numeric(7,3) AS fg3a_per_100,
 
     -- Avanzadas de equipo, tal cual las da la fuente.
+    tgs.seconds_played,
     tgs.possessions, tgs.pace,
     tgs.off_rating, tgs.def_rating, tgs.net_rating,
-    tgs.ts_pct, tgs.efg_pct
+    tgs.ts_pct, tgs.efg_pct,
+
+    -- Contexto con el que se LLEGABA al partido. Sin esto, `queries.py` tenía
+    -- que bajar a la tabla base saltándose la vista, que es justo lo que la
+    -- vista existe para evitar.
+    tgs.wins_before, tgs.losses_before,
+    tgs.absent_minutes, tgs.absent_players,
+
+    -- De dónde salieron los puntos, propios y del rival. Se ingerían, se
+    -- migraban, `status` las contaba y NO LAS LEÍA NADIE hasta que `/stability`
+    -- las pidió — y tuvo que ir a la tabla base por no estar aquí.
+    tgs.pts_paint, tgs.pts_fastbreak, tgs.pts_off_turnovers, tgs.pts_2nd_chance,
+    tgs.opp_pts_paint, tgs.opp_pts_fastbreak,
+    tgs.opp_pts_off_turnovers, tgs.opp_pts_2nd_chance
 
 FROM team_game_stats tgs
 JOIN games g ON g.game_id = tgs.game_id
