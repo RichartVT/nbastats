@@ -509,6 +509,7 @@ _DIMENSION_SQL: dict[Dimension, str] = {
         "CASE WHEN r.is_back_to_back THEN 'segundo en 2 días' ELSE 'con descanso' END"
     ),
     Dimension.SEASON: "r.season_id",
+    Dimension.STARTER: "CASE WHEN r.started THEN 'titular' ELSE 'suplente' END",
 }
 
 

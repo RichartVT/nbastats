@@ -106,7 +106,15 @@ WHERE g.season_type <> 'preseason'
   -- `games_played` es un `COUNT(*)`, y los promedios por partido dividen por
   -- él. Filtrando aquí, `mv_player_season` y todo lo demás siguen significando
   -- lo mismo que antes sin tocar una sola línea más.
-  AND pgs.dnp_reason IS NULL;
+  AND pgs.dnp_reason IS NULL
+  -- Y hace falta que haya línea de box score. La fuente de titularidad listó
+  -- un caso (Thomas Bryant, 23/02/2024) sin motivo de DNP, con 0 segundos y
+  -- SIN estadísticas: ni jugó ni consta por qué. Una fila sin números no es
+  -- una aparición y no tiene tasas que aportar.
+  --
+  -- No confundir con las 22 filas de 0 segundos que sí traen ceros reales:
+  -- ésas son apariciones, el jugador entró y no le dio tiempo a nada.
+  AND pgs.pts IS NOT NULL;
 
 -- El acceso dominante es "todos los partidos de un jugador, en orden".
 CREATE INDEX ix_mvpgr_player_date ON mv_player_game_rates (player_id, game_date_local);

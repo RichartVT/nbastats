@@ -43,8 +43,9 @@ Documentos hermanos:
 | 21 | Deuda de mantenimiento | ✅ Completa — `daily` completo, obsolescencia visible, oxlint a cero |
 | 22 | Calidad de tiro desde el play-by-play | ✅ Completa — **resultado negativo**, línea cerrada |
 | 23 | Curva de edad por método delta | ✅ Completa — sesgo corregido y medido |
+| 24 | Titularidad y DNP | ✅ Completa — 6.602/6.602, invariante al dígito |
 
-**Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
+**Números:** 6.602 partidos · 172.477 filas jugador-partido (140.932 apariciones + 31.545 DNP) · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
 marcador por periodo · 1.030 jugadores con biografía completa · 5 temporadas
 (2021-22 → 2025-26) · 523 tests · 15 migraciones · **844 MB**.
@@ -1918,6 +1919,77 @@ lectura sobre la que se puede afirmar algo, y así se enseña.
 En `/tendencias`, debajo de la lista de jugadores al alza y en declive, que es
 donde tiene sentido: sin la curva, "este jugador cae" no se distingue de "este
 jugador tiene 34 años y le pasa lo que a todos". Que era la pregunta.
+
+---
+
+## Fase 24 — Titularidad y DNP: 31.545 filas nuevas sin romper nada
+
+La última pieza que necesitaba red. **6.599 peticiones, 0 fallos**, unos 78
+minutos — la estimación de la auditoría (~1,3 h) era la buena; la mía de "3
+horas" salió de los primeros minutos, que van lentos por el arranque.
+
+### Dos trampas, encontradas antes de pagar la descarga
+
+**La titularidad no es un campo.** No existe `starter`: lo que hay es
+`position`, rellena solo para los cinco titulares y vacía para el resto.
+Comprobado sobre los 6.602 partidos: **cero** con un número de titulares
+distinto de 10.
+
+**El endpoint añade filas.** Trae a quien no jugó, con el motivo. Los `NWT`
+("not with team") permiten separar tres niveles que antes eran uno: no está
+disponible, está disponible y no juega, y ni siquiera viajó.
+
+| Motivo | n |
+|---|---|
+| DNP - Coach's Decision | 26.166 |
+| DND - Injury/Illness | 4.480 |
+| NWT - Not With Team | ~190 |
+| DND - Rest | ~130 |
+
+### Lo que esas filas habrían roto, y no rompieron
+
+Cinco sitios, todos en silencio. Se midió el daño ejecutando la lógica vieja
+**con los datos ya dentro**:
+
+| | Correcto | Sin el arreglo |
+|---|---|---|
+| `games_played` inflado | 22 | **28.619** |
+| `fg3a_per_game` de Kyle Lowry | 1,79 | **0,30** |
+| Índice de ausencias, media | 72,46 min | **43,39** |
+| Partidos con 100+ min fuera | 3.126 | **1.181** |
+
+Lo del índice es lo más instructivo: buscaba **filas inexistentes**, así que un
+lesionado con fila de lesionado habría dejado de contar como ausente justo por
+tenerla. Y **habría seguido pareciendo correcto** — el gradiente roto daba
+57,3 % → 31,0 %, monótono y hasta más pronunciado. Nada habría avisado.
+
+Un detalle que sí protegía solo: los promedios por partido usan `AVG()`, que
+ignora los nulos, así que `pts_per_game` nunca estuvo en peligro. Los que
+dividen explícitamente por `COUNT(*)` sí.
+
+**La invariante que lo cierra:** tras cargar 31.545 filas y rehacer las vistas,
+la capa de tasas tiene **140.932 filas, exactamente las mismas que antes**, y el
+índice de ausencias no se movió ni un decimal (72,46 min · 3.126 partidos).
+
+### Un hallazgo de la fuente
+
+Una fila —Thomas Bryant, 23/02/2024— viene **sin motivo de DNP, con 0 segundos y
+sin estadísticas**: ni jugó ni consta por qué. No es lo mismo que las 22 filas de
+0 segundos que sí traen ceros reales (ésas son apariciones: entró y no le dio
+tiempo a nada). La capa de tasas exige ahora línea de box score, que es lo que
+hace cuadrar la invariante al dígito.
+
+### Lo que desbloquea
+
+- **Split titular/suplente**, dimensión nueva de los splits. Llevaba previsto en
+  `mv_player_game_rates` desde la fase 4 esperando solo a que la columna tuviera
+  datos. Con su aviso: salir de inicio no es una condición del jugador sino una
+  decisión del entrenador, que suele seguir al rendimiento y a las lesiones de
+  otros.
+- **El porqué de cada ausencia** en la ficha de partido. Y una complementariedad
+  que no era obvia: el motivo explica las ausencias **cortas**, mientras el
+  índice inferido caza las **largas** — a Markkanen o Morant, fuera meses, la
+  fuente ni los lista en el partido.
 
 ---
 

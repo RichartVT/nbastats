@@ -103,6 +103,7 @@ class Dimension(enum.StrEnum):
     BACK_TO_BACK = "b2b"
     SEASON = "season"
     PERIOD = "period"
+    STARTER = "starter"
 
 
 DIAS = {1: "lunes", 2: "martes", 3: "miércoles", 4: "jueves",
@@ -149,6 +150,13 @@ DIMENSIONS: dict[Dimension, DimensionDef] = {
     ),
     Dimension.BACK_TO_BACK: DimensionDef("Segundo partido en 2 días", 2),
     Dimension.SEASON: DimensionDef("Temporada", 5),
+    Dimension.STARTER: DimensionDef(
+        "Titular o suplente", 2,
+        "Salir de inicio no es una condición del jugador, es una decisión del "
+        "entrenador que suele seguir al rendimiento y a las lesiones de otros. "
+        "Un jugador que rinde mejor de titular puede estar diciendo que juega "
+        "mejor con los titulares, no que le siente bien el rol.",
+    ),
     Dimension.PERIOD: DimensionDef(
         "Cuarto", 4,
         "Los minutos no se reparten igual entre cuartos: el cuarto cuarto mezcla "
