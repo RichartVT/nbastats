@@ -721,6 +721,91 @@ desglose por cuarto.
 
 ---
 
+## Fase 11 — Equipos: de dónde salen los puntos, y qué se repite
+
+El proyecto gira hacia los equipos y hacia una pregunta nueva: *"este equipo
+debió ganar, ¿por qué perdió?"*.
+
+### Lo que se midió antes de diseñar nada
+
+Ninguna de estas cifras es una estimación; todas salen de consultar la base
+antes de escribir una línea de motor.
+
+**El listón del pronóstico.** Gana el local el **55,3 %** de las veces (6.136
+partidos, sin sede neutral). Gana el de mejor récord el **64,4 %** (4.539
+partidos, desde el partido 20). Cualquier modelo que no bata el 64,4 % no vale
+nada, y el techo realista está en 68-71 %. Escrito antes de empezar, para no
+tener que justificarlo después.
+
+**Cuánta suerte hay.** La desviación típica del % de triple de un equipo en un
+partido es de **8,2 puntos porcentuales**; traducido a puntos, la de "triples
+por encima o por debajo de su propia norma" es de **8,5 puntos**. Los equipos
+promedian +2,8 de ese factor en sus victorias y −2,8 en sus derrotas, sobre un
+margen medio de 12,4.
+
+**Cuántas anomalías hay.** El 25,1 % de los partidos se decide por ≤5 puntos. El
+**17,9 %** de los equipos con mejor eFG% pierde. Solo el **0,4 %** pierde
+ganando los cuatro factores de Oliver: unos 25 partidos en cinco temporadas.
+
+**Las ausencias, gratis.** Cruzando los minutos habituales de la rotación con
+quién jugó cada partido sale un gradiente monótono de **24 puntos porcentuales**
+en victorias, del 63,9 % con la plantilla entera al 40,1 % con 100+ minutos
+habituales fuera. Cero peticiones nuevas.
+
+### De dónde salen los puntos: 15 peticiones
+
+`TeamGameLogs(MeasureType="Misc")` da los puntos en la pintura, de contraataque,
+tras pérdida y de segunda oportunidad —**propios y del rival**— para una
+temporada entera en **una** petición. Se integró como tercer `MeasureType` de la
+carga masiva que ya existía, así que `daily` lo mantiene solo.
+
+Cobertura 13.204/13.204, y una comprobación que da confianza: los puntos en la
+pintura que la fila de un equipo atribuye al rival coinciden con los propios de
+la fila del otro equipo en **los 13.204 casos**. Dos registros independientes de
+la misma fuente que concuerdan.
+
+**Hallazgo colateral.** El `upsert()` genérico pone a NULL toda columna que no
+venga en la fila —por eso `rest_days` se pasaba explícito con un comentario— así
+que las columnas nuevas y `wins_before`/`losses_before` se pasan también
+explícitas. Sin eso, cada recarga las habría borrado en silencio hasta el
+siguiente `refresh`.
+
+### Récord con el que se llega al partido
+
+Columna derivada en `derive.sql`, junto a `rest_days`, porque depende de todos
+los partidos anteriores del equipo. `COUNT(*) FILTER (WHERE won) OVER (... ROWS
+BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)`; el `1 PRECEDING` impide que el
+partido se cuente a sí mismo. La partición incluye `season_type`, para que un
+séptimo partido de final no muestre el 58-24 de la fase regular.
+
+Validado: el récord tras el último partido coincide con `team_standings` en los
+**30 de 30** equipos.
+
+### `analysis/stability.py`: medir antes de afirmar
+
+El plan original **daba por sentado** qué componentes son suerte y cuáles
+habilidad. Eso es una opinión. El módulo nuevo descompone la varianza entre
+equipos —reutilizando `_estimate_tau_squared`, el mismo método de los momentos
+que sostiene el encogimiento de los splits— y devuelve
+
+    k = varianza intra / varianza real entre equipos
+
+que se lee en partidos: cuántos hacen falta para que la media propia pese la
+mitad. La tabla completa está en `CAPABILITIES.md` §5. El contraste que sostiene
+todo el motor:
+
+| | k | Peso con 82 partidos |
+|---|---|---|
+| Triples que **concedes** | 8 | 0,91 |
+| Que **entren** | 150 | 0,35 |
+
+Un equipo controla el volumen que concede casi veinte veces mejor que el
+acierto. Y un resultado que contradecía lo esperado: el **acierto de 2 concedido
+sale en k=17**, o sea habilidad clara. Proteger el aro se repite; defender el
+triple, no.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:

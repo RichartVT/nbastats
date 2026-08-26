@@ -279,6 +279,23 @@ class TeamGameStats(Base):
     rest_days: Mapped[int | None] = mapped_column(SmallInteger)
     is_back_to_back: Mapped[bool | None] = mapped_column(Boolean)
 
+    # --- De dónde salieron los puntos (MeasureType="Misc") ---
+    #
+    # El box score dice cuántos puntos hubo; esto dice de dónde vinieron, que es
+    # lo que explica una derrota con mejores porcentajes: "les ganaron 22-8 en
+    # puntos tras pérdida". Los cuatro `opp_*` son lo que hizo el RIVAL, y viven
+    # aquí en vez de leerse de la fila del rival porque la fuente los da así y
+    # porque la pregunta natural —"¿cuánto me castigaron mis pérdidas?"— se
+    # responde desde la fila propia.
+    pts_paint: Mapped[int | None] = mapped_column(Count)
+    pts_fastbreak: Mapped[int | None] = mapped_column(Count)
+    pts_off_turnovers: Mapped[int | None] = mapped_column(Count)
+    pts_2nd_chance: Mapped[int | None] = mapped_column(Count)
+    opp_pts_paint: Mapped[int | None] = mapped_column(Count)
+    opp_pts_fastbreak: Mapped[int | None] = mapped_column(Count)
+    opp_pts_off_turnovers: Mapped[int | None] = mapped_column(Count)
+    opp_pts_2nd_chance: Mapped[int | None] = mapped_column(Count)
+
     # Récord con el que el equipo LLEGABA a este partido, sin contarlo.
     #
     # Es lo que convierte un resultado en una historia: "ganó por 20" dice poco;

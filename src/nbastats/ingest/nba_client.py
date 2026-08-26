@@ -209,16 +209,28 @@ class NBAClient:
         season_type: SeasonType,
         *,
         advanced: bool = False,
+        measure_type: str | None = None,
     ) -> list[dict]:
-        """Box scores de equipo de una temporada entera (2 filas por partido)."""
+        """Box scores de equipo de una temporada entera (2 filas por partido).
+
+        `measure_type="Misc"` devuelve, en la MISMA petición y para la temporada
+        entera, de dónde salieron los puntos: pintura, contraataque, tras
+        pérdida y segunda oportunidad — propios y del rival. Es el desglose que
+        contesta "perdieron el partido en las pérdidas", y cuesta una petición,
+        no una por partido.
+
+        `advanced=True` es azúcar para `measure_type="Advanced"`; se mantiene
+        porque ya lo usa la carga histórica.
+        """
         from nba_api.stats.endpoints import teamgamelogs
 
         params: dict[str, Any] = {
             "season_nullable": season,
             "season_type_nullable": SEASON_TYPE_PARAM[season_type],
         }
-        if advanced:
-            params["measure_type_player_game_logs_nullable"] = "Advanced"
+        tipo = measure_type or ("Advanced" if advanced else None)
+        if tipo:
+            params["measure_type_player_game_logs_nullable"] = tipo
         return self._call(teamgamelogs.TeamGameLogs, **params)
 
     def scoreboard(self, game_date: str) -> list[dict]:

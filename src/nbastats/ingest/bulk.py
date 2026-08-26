@@ -383,9 +383,15 @@ def _build_team_stats(
     team_adv: Sequence[dict],
     rivales: dict[str, dict[int, int]],
     home_by_game: dict[str, int],
+    team_misc: Sequence[dict] = (),
 ) -> list[dict]:
     avanzadas = {
         (str(r["GAME_ID"]), r["TEAM_ID"]): r for r in team_adv if r.get("GAME_ID")
+    }
+    # `Misc` va como tercer MeasureType de la misma llamada masiva: una petición
+    # por temporada y tipo, no una por partido.
+    miscelanea = {
+        (str(r["GAME_ID"]), r["TEAM_ID"]): r for r in team_misc if r.get("GAME_ID")
     }
 
     filas = []
@@ -396,6 +402,7 @@ def _build_team_stats(
             continue
 
         adv = avanzadas.get((gid, tid), {})
+        misc = miscelanea.get((gid, tid), {})
         filas.append(
             {
                 "game_id": gid,
@@ -430,11 +437,24 @@ def _build_team_stats(
                 "net_rating": _num(adv.get("NET_RATING")),
                 "efg_pct": _num(adv.get("EFG_PCT")),
                 "ts_pct": _num(adv.get("TS_PCT")),
-                # rest_days / is_back_to_back se calculan después, en
-                # db/sql/derive.sql: dependen del partido anterior del equipo,
-                # que puede no estar cargado todavía.
+                # De dónde salieron los puntos. Vacío si no se pidió `Misc`.
+                "pts_paint": _num(misc.get("PTS_PAINT")),
+                "pts_fastbreak": _num(misc.get("PTS_FB")),
+                "pts_off_turnovers": _num(misc.get("PTS_OFF_TOV")),
+                "pts_2nd_chance": _num(misc.get("PTS_2ND_CHANCE")),
+                "opp_pts_paint": _num(misc.get("OPP_PTS_PAINT")),
+                "opp_pts_fastbreak": _num(misc.get("OPP_PTS_FB")),
+                "opp_pts_off_turnovers": _num(misc.get("OPP_PTS_OFF_TOV")),
+                "opp_pts_2nd_chance": _num(misc.get("OPP_PTS_2ND_CHANCE")),
+                # Estas cuatro se calculan DESPUÉS, en db/sql/derive.sql:
+                # dependen de los partidos anteriores del equipo, que pueden no
+                # estar cargados todavía. Se pasan explícitas a None porque el
+                # upsert pone a NULL toda columna ausente, y verlas aquí evita
+                # que alguien las busque en vano en la respuesta de la API.
                 "rest_days": None,
                 "is_back_to_back": None,
+                "wins_before": None,
+                "losses_before": None,
             }
         )
     return filas
@@ -539,6 +559,7 @@ def ingest_season(
         return result
 
     team_adv = client.team_game_logs(season, season_type, advanced=True)
+    team_misc = client.team_game_logs(season, season_type, measure_type="Misc")
     player_base = client.player_game_logs(season, season_type)
     player_adv = client.player_game_logs(season, season_type, advanced=True)
 
@@ -556,7 +577,7 @@ def ingest_season(
         result.team_rows = upsert(
             session,
             TeamGameStats,
-            _build_team_stats(team_base, team_adv, rivales, home_by_game),
+            _build_team_stats(team_base, team_adv, rivales, home_by_game, team_misc),
             keys=["game_id", "team_id"],
         )
         result.player_rows = upsert(

@@ -107,6 +107,31 @@ las mismas tendencias y splits que los jugadores, normalizados per-100
 posesiones en vez de per-36 minutos: un equipo siempre juega 48 minutos, así
 que lo que distingue no son los minutos sino cuántas posesiones caben dentro.
 
+**De dónde salieron los puntos**
+puntos en la pintura, de contraataque, tras pérdida y de segunda oportunidad,
+**propios y del rival**, para los dos equipos de cada partido
+(`team_game_stats`, cobertura 100 %). Es lo que separa "perdieron tirando mejor"
+de "les ganaron 22-8 en puntos tras pérdida".
+
+**Récord con el que cada equipo llegaba a un partido**
+victorias y derrotas ANTES de ese partido, sin contarlo
+(`wins_before` / `losses_before`, derivadas en `derive.sql`). Se cuentan dentro
+del mismo tipo de temporada: en un partido de playoffs es el recorrido en esos
+playoffs, no el 58-24 de la fase regular. Validado contra `team_standings` en
+los 30 equipos.
+
+**Cuánto se repite cada cosa** (`analysis/stability.py`)
+para cualquier componente del juego, cuántos partidos hacen falta para que la
+media propia de un equipo pese la mitad frente a la media de liga. No es una
+opinión sobre qué es suerte: es la descomposición de la varianza entre equipos,
+medida sobre los 6.150 partidos de temporada regular. Ver §6.
+
+**Cada evento de cada partido** (`play_by_play`, 3.251.908 filas)
+tiro a tiro, con reloj, periodo, marcador acumulado, autor, tipo de acción y
+**coordenadas de tiro** (`x_legacy`, `y_legacy`, `shot_distance`). Cobertura
+6.602/6.602 partidos, sin un solo hueco. De aquí salen las rachas, el clutch,
+los cambios de liderato, las zonas de tiro y los quintetos.
+
 **Clasificación y enfrentamientos directos**
 posiciones oficiales con los desempates de la NBA ya aplicados, récords
 desglosados y historial entre dos equipos cualesquiera.
@@ -262,6 +287,42 @@ temporadas mezcla plantillas distintas, así que "¿cómo juega este equipo?" y
 "¿cómo juega esta franquicia?" son preguntas distintas y el selector obliga a
 elegir cuál se está haciendo.
 
+### El perfil de tiro no es solo una elección
+
+Un equipo que va perdiendo de 18 en el último cuarto tira más triples y hace más
+falta. Esos triples no dicen "así juega este equipo", dicen "iban perdiendo".
+
+Importa porque cualquier análisis que trate el volumen de tiro como una decisión
+—y es lo razonable, porque **se mide en k=3 partidos**, la cosa más estable de
+todo el juego (§6)— le está atribuyendo al sistema ofensivo una parte que fue
+desesperación. Con `game_period_scores` se puede marcar qué partidos iban
+decididos al empezar el último cuarto (~20-25 %) y avisar; corregirlo de verdad
+exige reconstruir el contexto del marcador tiro a tiro desde el play-by-play,
+que ya está cargado pero todavía no explotado así.
+
+### "Debió ganar" no es una pregunta contestable con esto
+
+Se puede decir **de dónde salieron los puntos** de un partido con precisión
+exacta: el desglose de `analysis/expected.py` suma el margen hasta el último
+decimal en los 6.150 partidos, con residuo 0,000000000000. Eso se publica.
+
+Lo que NO se puede es concluir "este equipo debió ganar". Para sostenerlo haría
+falta que el margen esperado —el que sale de normalizar el acierto de tiro—
+midiera la fuerza de un equipo mejor que el margen real. **Se probaron cinco
+formulaciones y ninguna lo consigue.** La prueba con más potencia, sobre 4.596
+partidos y con walk-forward estricto:
+
+| Estimador de fuerza | Acierta el ganador |
+|---|---|
+| Margen real medio | **64,12 %** |
+| Normalizando el acierto, con el peso de cada componente | 63,69 % |
+
+Diferencia −0,44 pp, con un umbral de ruido de ±1,0 pp.
+
+Así que la ficha de partido dirá cuánto pesó cada factor, y **no** dirá quién
+merecía ganar. Es el mismo criterio que dejó la curva de edad sin endpoint: no
+se expone lo que no aguanta, y el motivo queda escrito.
+
 ### Otras preguntas frágiles por el mismo motivo
 
 - "¿Cómo rinde contra [un rival concreto]?" — n≈15 en cinco temporadas, y además
@@ -297,6 +358,73 @@ elegir cuál se está haciendo.
 ---
 
 ## 5. Cómo ampliar el contrato
+## 6. Qué se repite y qué es la noche
+
+`analysis/stability.py` descompone la varianza de cada componente entre equipos
+—la misma maquinaria del método de los momentos que sostiene el encogimiento de
+los splits— y devuelve un número que se lee en partidos:
+
+    k = varianza dentro del equipo / varianza real entre equipos
+
+`k` es **cuántos partidos hacen falta para que la media propia de un equipo pese
+la mitad**, frente a la media de la liga. El peso es `w(n) = n / (n + k)`.
+
+Medido sobre los 6.150 partidos de temporada regular, 150 equipos-temporada:
+
+| Componente | k | Peso con 82 partidos |
+|---|---|---|
+| Perfil de triple propio (3PA/FGA) | 3 | 0,97 |
+| Ritmo (posesiones) | 7 | 0,92 |
+| Rebote ofensivo | 7 | 0,92 |
+| **Triples concedidos** (3PA/FGA del rival) | **8** | **0,91** |
+| Pérdidas por posesión | 15 | 0,85 |
+| Acierto en tiros de 2 | 16 | 0,84 |
+| Tasa de tiros libres | 17 | 0,83 |
+| Acierto de 2 concedido | 17 | 0,83 |
+| Acierto en tiros libres | 21 | 0,80 |
+| Acierto en triples propio | 47 | 0,64 |
+| **Acierto en triples concedido** | **150** | **0,35** |
+
+**Un equipo controla a cuántos triples obliga al rival (k=8) casi veinte veces
+mejor de lo que controla si entran (k=150).** Elige el volumen; no elige el
+acierto. Eso no es una opinión sobre el baloncesto: es lo que dicen estos datos,
+y es lo que autoriza a tratar el acierto del rival como ruido y el volumen
+concedido como decisión.
+
+Dos consecuencias prácticas:
+
+- **Un porcentaje de triple de un partido no describe a nadie.** Ni el propio
+  (k=47) ni mucho menos el concedido. Cualquier lectura de un partido suelto que
+  se apoye en ellos está leyendo la noche, no al equipo.
+- **Proteger el aro sí se repite** (acierto de 2 concedido, k=17). Contradecía
+  lo que esperábamos y por eso queda escrito: la defensa interior es habilidad
+  medible; la del triple, no.
+
+`k` también tiene error —sale de comparar 30 equipos por temporada— así que
+`variance_components` devuelve su propia `Reliability` al lado. Un `k` sin
+intervalo invita a construir encima de arena.
+
+---
+
+## 7. Cómo ampliar el contrato
+
+### Ya hecho
+
+| Ampliación | Qué desbloqueó | Coste real |
+|---|---|---|
+| **Desglose por cuarto** (`PlayerGameLogs` con `Period`) | Rendimiento por cuarto de jugador | **93 peticiones, 5 min**, 481.863 filas, 88 MB |
+| **Resumen de partido** (`BoxScoreSummaryV3`) | Marcador por cuarto, asistencia, pabellón, árbitros, prórrogas reales | 6.602 peticiones, ~1,3 h, 53.534 filas |
+| **De dónde salen los puntos** (`TeamGameLogs` con `MeasureType="Misc"`) | Pintura, contraataque, tras pérdida y segunda oportunidad, propios y del rival | **15 peticiones, 2 min**, 8 columnas |
+| **Play-by-play** (`PlayByPlayV3`) | Rachas, clutch, cambios de liderato, quintetos, **zonas de tiro** | 6.602 peticiones, **1 h 11 min**, **3.251.908 filas, 576 MB** |
+
+La primera fila es la corrección más importante de esta sección: se estimaba a
+~6.600 peticiones porque el camino evidente era `BoxScoreTraditionalV3` partido
+a partido. `PlayerGameLogs` acepta `Period` y devuelve la temporada entera
+restringida a un cuarto de una vez, así que costó **350 veces menos**. La
+lección se repite: antes de pagar una pasada por partido, comprobar si el
+endpoint masivo admite el filtro.
+
+### Pendiente
 
 | Ampliación | Qué desbloquea | Coste |
 |---|---|---|
