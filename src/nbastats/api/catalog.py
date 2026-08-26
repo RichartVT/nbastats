@@ -92,6 +92,7 @@ class Dimension(enum.StrEnum):
     MONTH = "month"
     BACK_TO_BACK = "b2b"
     SEASON = "season"
+    PERIOD = "period"
 
 
 DIAS = {1: "lunes", 2: "martes", 3: "miércoles", 4: "jueves",
@@ -138,4 +139,212 @@ DIMENSIONS: dict[Dimension, DimensionDef] = {
     ),
     Dimension.BACK_TO_BACK: DimensionDef("Segundo partido en 2 días", 2),
     Dimension.SEASON: DimensionDef("Temporada", 5),
+    Dimension.PERIOD: DimensionDef(
+        "Cuarto", 4,
+        "Los minutos no se reparten igual entre cuartos: el cuarto cuarto mezcla "
+        "cerrar partidos igualados con estar sentado en las palizas. Mira los puntos "
+        "junto a los minutos de ese cuarto, nunca solos.",
+    ),
 }
+
+
+# =========================================================================
+# Filtros del listado de jugadores
+#
+# Mismo principio que el resto del catálogo: el cliente manda una clave de un
+# enum, nunca un trozo de SQL ni un nombre de columna.
+# =========================================================================
+
+
+class PlayerStatusFilter(enum.StrEnum):
+    """Situación del jugador. Ver `analysis.player_status` para el porqué de
+    estas tres y no de un "Retirado" que los datos no permiten afirmar."""
+
+    ACTIVO = "activo"
+    AGENTE_LIBRE = "agente_libre"
+    FUERA_LIGA = "fuera_liga"
+
+
+PLAYER_STATUS_LABELS: dict[PlayerStatusFilter, str] = {
+    PlayerStatusFilter.ACTIVO: "En plantilla",
+    PlayerStatusFilter.AGENTE_LIBRE: "Agentes libres",
+    PlayerStatusFilter.FUERA_LIGA: "Fuera de la liga",
+}
+
+
+class PositionGroup(enum.StrEnum):
+    """Puesto, agrupado.
+
+    La NBA no publica los cinco puestos clásicos: solo Guard / Forward /
+    Center y sus combinaciones con guion. Ofrecer "Base" y "Escolta" por
+    separado sería inventarse una precisión que el dato no tiene.
+    """
+
+    GUARD = "guard"
+    FORWARD = "forward"
+    CENTER = "center"
+
+
+@dataclass(frozen=True)
+class PositionDef:
+    label: str
+    db_word: str
+    """Palabra tal cual la escribe la NBA. Se busca por LIKE para que 'Guard'
+    encuentre también a los 'Guard-Forward': un escolta-alero es las dos
+    cosas, y dejarlo fuera de los dos filtros lo haría invisible."""
+
+
+POSITIONS: dict[PositionGroup, PositionDef] = {
+    PositionGroup.GUARD: PositionDef("Exteriores (G)", "Guard"),
+    PositionGroup.FORWARD: PositionDef("Aleros (F)", "Forward"),
+    PositionGroup.CENTER: PositionDef("Interiores (C)", "Center"),
+}
+
+
+class PlayerSort(enum.StrEnum):
+    """Columna por la que se ordena el listado. Se combina con `SortDir`."""
+
+    NOMBRE = "nombre"
+    EDAD = "edad"
+    ALTURA = "altura"
+    PARTIDOS = "partidos"
+    MINUTOS = "minutos"
+    PUNTOS = "puntos"
+    REBOTES = "rebotes"
+    ASISTENCIAS = "asistencias"
+    TS = "ts"
+    TRIPLES = "triples"
+
+
+class SortDir(enum.StrEnum):
+    DESC = "desc"
+    ASC = "asc"
+
+
+PLAYER_SORT_LABELS: dict[PlayerSort, str] = {
+    PlayerSort.NOMBRE: "Nombre",
+    PlayerSort.EDAD: "Edad",
+    PlayerSort.ALTURA: "Altura",
+    PlayerSort.PARTIDOS: "Partidos",
+    PlayerSort.MINUTOS: "Minutos por partido",
+    PlayerSort.PUNTOS: "Puntos por partido",
+    PlayerSort.REBOTES: "Rebotes por partido",
+    PlayerSort.ASISTENCIAS: "Asistencias por partido",
+    PlayerSort.TS: "True Shooting %",
+    PlayerSort.TRIPLES: "% de triples",
+}
+
+
+# Suelo de intentos de triple, POR PARTIDO. Es la unidad correcta aquí: un
+# mínimo de intentos totales cambiaría de significado según el alcance —82
+# triples son muchos en una temporada y pocos en cinco—, mientras que "2 por
+# partido" quiere decir lo mismo en cualquiera de los dos.
+#
+# Sin este filtro, ordenar por % de triples encabeza con un pívot que metió
+# 1 de 1 en cinco temporadas. El porcentaje es correcto; el ranking, inútil.
+# =========================================================================
+# Suelos de volumen para los porcentajes
+#
+# Un porcentaje sin volumen no es una medida, es una anécdota. Ordenar por él
+# sin suelo pone arriba a quien metió 1 de 1, con un 100% correcto y un puesto
+# que no significa nada.
+#
+# EL SUELO VA EN INTENTOS TOTALES, NO POR PARTIDO. La precisión de una
+# proporción depende del número de intentos y de nada más: el error típico es
+# raíz(p(1-p)/n). Un suelo por partido no controla ese n — deja pasar 5,6
+# triples por partido en 14 partidos, que son 79 intentos y un margen de ±5,6
+# puntos, por delante de quien lleva 1.436 con ±2,6. Los dos números se
+# escriben igual y no valen lo mismo.
+#
+# Referencia: la NBA exige 82 triples ANOTADOS para entrar en su ranking de
+# temporada, que son ~230 intentos. De ahí sale el suelo automático.
+#
+# Son valores por defecto, no imposiciones: pedir 0 explícito los desactiva, y
+# la interfaz enseña que están puestos y cómo quitarlos.
+MIN_FG3A_AUTO = 200.0
+
+MIN_FG3A_OPTIONS: tuple[tuple[float, str], ...] = (
+    (0, "Sin mínimo"),
+    (100, "100+ triples lanzados"),
+    (200, "200+ lanzados"),
+    (400, "400+ lanzados"),
+    (800, "800+ lanzados"),
+)
+
+# Para el TS% el volumen no son los tiros de campo: son los intentos de tiro
+# verdaderos, fga + 0,44 · fta, que es el denominador de la propia fórmula.
+# Contar solo los tiros de campo dejaría fuera a quien vive en la línea de
+# personal, que es justo quien más TS% saca.
+MIN_TSA_AUTO = 500.0
+
+MIN_TSA_OPTIONS: tuple[tuple[float, str], ...] = (
+    (0, "Sin mínimo"),
+    (200, "200+ tiros"),
+    (500, "500+ tiros"),
+    (1000, "1000+ tiros"),
+    (2000, "2000+ tiros"),
+)
+
+# Tope de criterios encadenados. Con cuatro ya se han agotado los empates
+# reales; permitir más solo alarga el ORDER BY sin mover una sola fila.
+MAX_CRITERIOS_ORDEN = 4
+
+
+def parse_sort(sort: str, default_dir: str = "desc") -> list[tuple[str, str]]:
+    """Traduce el parámetro `sort` a una cadena de criterios.
+
+    Acepta "puntos", "puntos:asc" y "edad:desc,puntos:asc,asistencias:desc".
+    Una clave sin dirección hereda `default_dir`, que es lo que mantiene viva
+    la forma antigua `?sort=puntos&dir=asc`.
+
+    Se descartan las claves repetidas quedándose con la PRIMERA aparición: en
+    una cadena, la primera es la que manda, y volver a ordenar por algo que ya
+    está ordenado no puede cambiar nada.
+
+    >>> parse_sort("puntos")
+    [('puntos', 'desc')]
+    >>> parse_sort("edad:desc,puntos:asc")
+    [('edad', 'desc'), ('puntos', 'asc')]
+    """
+    criterios: list[tuple[str, str]] = []
+    vistas: set[str] = set()
+
+    for trozo in sort.split(","):
+        trozo = trozo.strip()
+        if not trozo:
+            continue
+        clave, _, direccion = trozo.partition(":")
+        clave = clave.strip().lower()
+        direccion = (direccion.strip().lower() or default_dir)
+
+        if clave not in {s.value for s in PlayerSort}:
+            raise ValueError(
+                f"Orden desconocido: '{clave}'. "
+                f"Válidos: {', '.join(s.value for s in PlayerSort)}"
+            )
+        if direccion not in {d.value for d in SortDir}:
+            raise ValueError(f"Dirección desconocida: '{direccion}'. Válidas: asc, desc")
+
+        if clave not in vistas:
+            vistas.add(clave)
+            criterios.append((clave, direccion))
+
+    return criterios or [(PlayerSort.PARTIDOS.value, default_dir)]
+
+# Los promedios ordenan mal sin un suelo de partidos: quien jugó dos encuentros
+# y anotó 20 en uno encabeza la lista de anotadores. No se impone un mínimo por
+# defecto —esconder jugadores sin avisar es peor— pero se ofrece el control y
+# la interfaz lo sugiere cuando el orden es por promedio.
+MIN_GAMES_OPTIONS: tuple[tuple[int, str], ...] = (
+    (0, "Sin mínimo"),
+    (20, "20+ partidos"),
+    (41, "41+ partidos (media temporada)"),
+    (58, "58+ partidos (mínimo oficial NBA)"),
+)
+
+
+# Por cuarto NO hay tasas. `player_period_stats` guarda totales y segundos, y
+# nada más: extrapolar a 36 minutos desde los 4 que alguien jugó en un tercer
+# cuarto produce los mismos disparates que el `pace` de jugador. Pedir una tasa
+# con dimensión "cuarto" es un error de la petición, no un hueco que rellenar.
+STATS_POR_CUARTO = tuple(s for s in Stat if not STATS[s].is_rate)

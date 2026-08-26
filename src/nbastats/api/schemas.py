@@ -19,6 +19,91 @@ from nbastats.analysis.trends import TrendDirection, TrendResult
 from nbastats.api.catalog import Dimension, Stat
 
 
+class PlayerStatusOut(BaseModel):
+    """Situación del jugador, derivada en `analysis.player_status`."""
+
+    key: str = Field(description="activo | agente_libre | fuera_liga | sin_datos")
+    label: str
+    note: str = Field(description="Qué significa exactamente, con las fechas")
+    on_roster: bool
+    team_label: str = Field(description='"Equipo actual" o "Último equipo"')
+
+
+class PlayerListItemOut(BaseModel):
+    """Una fila del listado de jugadores.
+
+    Trae el equipo aunque el jugador ya no esté en activo: para quien no
+    pertenece a ninguna plantilla es el ÚLTIMO en el que estuvo, y por eso
+    `status.team_label` dice cómo hay que llamarlo. Enseñarlo sin esa distinción
+    convierte a un jugador retirado en fichaje de los Lakers.
+    """
+
+    player_id: int
+    full_name: str
+    status: PlayerStatusOut
+
+    position: str | None = None
+    jersey_number: str | None = None
+    birthdate: dt.date | None = None
+    age: float | None = None
+    height_cm: int | None = None
+    weight_kg: int | None = None
+    country: str | None = None
+    draft_year: int | None = None
+    draft_round: int | None = None
+    draft_number: int | None = None
+    season_experience: int | None = None
+
+    current_team_id: int | None = None
+    current_team_abbr: str | None = None
+    current_team_name: str | None = None
+
+    primera: str
+    ultima: str
+    ultima_nba: str = Field(description="Última temporada con partidos, ignorando filtros")
+    temporadas: int
+    equipos: list[str] = Field(default_factory=list)
+
+    # Los promedios corresponden al ALCANCE pedido: si se filtró por temporada
+    # son los de esa temporada, no los de la carrera.
+    partidos: int
+    partidos_post: int
+    min_per_game: float | None = None
+    pts_per_game: float | None = None
+    reb_per_game: float | None = None
+    ast_per_game: float | None = None
+    ts_pct: float | None = None
+
+    # El porcentaje de triples nunca viaja solo: sin los intentos por partido
+    # no se distingue al tirador de volumen del que metió dos de dos.
+    fg3_pct: float | None = None
+    fg3a_per_game: float | None = None
+    # Los intentos TOTALES del alcance. Son el n del que depende la precisión
+    # del porcentaje: 46% en 79 intentos y 46% en 1.436 se escriben igual y no
+    # valen lo mismo.
+    fg3a: int | None = None
+    tsa: int | None = Field(None, description="Intentos de tiro verdaderos: fga + 0,44·fta")
+
+
+class PlayerListResponse(BaseModel):
+    total: int = Field(description="Jugadores que cumplen los filtros, antes del límite")
+    shown: int
+    latest_season: str
+    season: str | None = Field(None, description="Temporada del alcance; null = todas")
+    # Un filtro que se aplica solo tiene que decirse: si la respuesta no
+    # declarase el suelo, el cliente enseñaría una lista recortada sin saberlo
+    # y sin poder explicar por qué falta gente.
+    min_fg3a_applied: float = Field(0, description="Suelo de triples lanzados en efecto")
+    min_fg3a_auto: bool = Field(
+        False, description="True si lo puso la API porque se ordenaba por % de triples"
+    )
+    min_tsa_applied: float = Field(0, description="Suelo de intentos de tiro en efecto")
+    min_tsa_auto: bool = Field(
+        False, description="True si lo puso la API porque se ordenaba por TS%"
+    )
+    items: list[PlayerListItemOut]
+
+
 class PlayerOut(BaseModel):
     player_id: int
     full_name: str
@@ -44,6 +129,11 @@ class PlayerOut(BaseModel):
     draft_round: int | None = None
     draft_number: int | None = None
     school: str | None = None
+
+    # El mismo estado derivado que el listado. Va aquí para que la ficha no
+    # pueda contradecir a la lista desde la que se llega a ella, que es lo que
+    # pasaría si cada una interpretase `roster_status` por su cuenta.
+    status: PlayerStatusOut
 
 
 class PlayerSeasonOut(BaseModel):
@@ -345,6 +435,9 @@ class TeamSummaryOut(BaseModel):
     win_pct: float | None = None
     playoff_rank: int | None = None
     diff_points_pg: float | None = None
+    # Formato "31-10", tal cual lo publica la liga.
+    home_record: str | None = None
+    road_record: str | None = None
 
 
 class RosterEntryOut(BaseModel):

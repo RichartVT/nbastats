@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import type { Player, PlayerRanks, RankedStat } from '../api/types'
 import { fmt, fmtPct } from '../lib/format'
-import { PlayerPhoto, TeamLogo } from './Media'
+import { PlayerPhoto, StatusBadge, TeamLogo } from './Media'
 
 function Dato({ etiqueta, valor }: { etiqueta: string; valor: string | null }) {
   if (!valor) return null
@@ -16,8 +16,6 @@ function Dato({ etiqueta, valor }: { etiqueta: string; valor: string | null }) {
 }
 
 export function PlayerHeader({ p }: { p: Player }) {
-  const activo = p.roster_status === 'Active'
-
   const draft =
     p.draft_year && p.draft_round && p.draft_number
       ? `${p.draft_year}: Rd ${p.draft_round}, Sel. ${p.draft_number}`
@@ -50,9 +48,14 @@ export function PlayerHeader({ p }: { p: Player }) {
           </h1>
 
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm">
+            {/* Para quien no está en plantilla, este equipo es el ÚLTIMO en
+                el que estuvo, no el actual. Sin la etiqueta, la ficha de un
+                jugador fuera de la liga lo presenta como jugador en activo de
+                un equipo que no lo tiene. */}
             {p.current_team_id && (
               <Link
                 to={`/equipo/${p.current_team_id}`}
+                title={p.status.team_label}
                 className="inline-flex items-center gap-1.5 hover:underline"
                 style={{ color: 'var(--series-1)' }}
               >
@@ -62,6 +65,11 @@ export function PlayerHeader({ p }: { p: Player }) {
                   size={22}
                 />
                 {p.current_team_name}
+                {!p.status.on_roster && (
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    (último)
+                  </span>
+                )}
               </Link>
             )}
             {p.jersey_number && (
@@ -72,21 +80,16 @@ export function PlayerHeader({ p }: { p: Player }) {
             )}
           </div>
 
-          {/* Estatus con punto Y palabra: el color solo no sirve a quien no lo
-              distingue, y los tonos de estado no llegan a 3:1 en modo claro. */}
-          {p.roster_status && (
-            <div className="mt-2 inline-flex items-center gap-1.5 text-sm">
-              <span
-                aria-hidden
-                style={{ color: activo ? 'var(--status-good)' : 'var(--text-muted)' }}
-              >
-                ●
-              </span>
-              <span style={{ color: 'var(--text-secondary)' }}>
-                {activo ? 'Activo' : 'Inactivo'}
-              </span>
-            </div>
-          )}
+          {/* "Inactivo" era engañoso: la NBA lo usa igual para el que se
+              quedó sin equipo este verano que para el que lleva cuatro años
+              fuera. El backend distingue los casos y aquí se enseña la nota
+              entera, que es donde está el matiz. */}
+          <div className="mt-2">
+            <StatusBadge status={p.status} size="md" />
+            <p className="mt-1 max-w-md text-xs" style={{ color: 'var(--text-muted)' }}>
+              {p.status.note}
+            </p>
+          </div>
         </div>
 
         <dl className="grid shrink-0 grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">

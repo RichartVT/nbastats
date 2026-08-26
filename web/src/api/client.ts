@@ -1,7 +1,8 @@
 import type {
-  Catalog, GameDetail, HeadToHead, LeadersResponse, Player, PlayerRanks,
-  PlayerSearchResult, PlayerSeason, RecentGame, SplitsResponse,
-  Standing, Team, TeamGame, TeamSplits, TeamSummary, TeamTrend, Trend,
+  Backtest, Catalog, GameDetail, HeadToHead, LeadersResponse, Player, PlayerFilters,
+  PlayerListResponse, PlayerRanks, PlayerSeason, RecentGame, SplitsResponse,
+  Prediction, RatingsResponse, Standing, Team, TeamGame, TeamSplits, TeamSummary,
+  TeamTrend, Trend,
 } from './types'
 
 const BASE = '/api'
@@ -21,8 +22,27 @@ async function get<T>(path: string, params?: Record<string, string | number>): P
 
 export const api = {
   catalog: () => get<Catalog>('/catalog'),
+  players: (f: PlayerFilters = {}) =>
+    get<PlayerListResponse>('/players', {
+      ...(f.search ? { search: f.search } : {}),
+      ...(f.status ? { status: f.status } : {}),
+      ...(f.team_id ? { team_id: f.team_id } : {}),
+      ...(f.position ? { position: f.position } : {}),
+      ...(f.season ? { season: f.season } : {}),
+      ...(f.min_games ? { min_games: f.min_games } : {}),
+      // 0 significa «no filtres», no «sin valor»: omitirlo dejaría que la
+      // API aplicase su suelo automático justo cuando se le pide que no.
+      ...(f.min_fg3a !== undefined ? { min_fg3a: f.min_fg3a } : {}),
+      ...(f.min_tsa !== undefined ? { min_tsa: f.min_tsa } : {}),
+      ...(f.country ? { country: f.country } : {}),
+      ...(f.sort ? { sort: f.sort } : {}),
+      ...(f.dir ? { dir: f.dir } : {}),
+      limit: f.limit ?? 50,
+      ...(f.offset ? { offset: f.offset } : {}),
+    }),
+  // Atajo para los buscadores con autocompletado, que solo quieren nombres.
   searchPlayers: (search: string, limit = 25) =>
-    get<PlayerSearchResult[]>('/players', { search, limit }),
+    api.players({ search, limit }).then((r) => r.items),
   player: (id: number) => get<Player>(`/players/${id}`),
   seasons: (id: number) => get<PlayerSeason[]>(`/players/${id}/seasons`),
   trend: (id: number, stat: string, window = 25) =>

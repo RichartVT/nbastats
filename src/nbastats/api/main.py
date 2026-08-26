@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from nbastats.analysis.game_types import describe_game
+from nbastats.analysis.player_status import describe_status
 from nbastats.analysis.reliability import analyze_splits, benjamini_hochberg
 from nbastats.analysis.trends import (
     MIN_GAMES_FOR_TREND,
@@ -25,7 +26,27 @@ from nbastats.analysis.trends import (
     rolling_mean,
 )
 from nbastats.api import queries as q
-from nbastats.api.catalog import DIMENSIONS, STATS, Dimension, Stat
+from nbastats.api.catalog import (
+    DIMENSIONS,
+    MAX_CRITERIOS_ORDEN,
+    MIN_FG3A_AUTO,
+    MIN_FG3A_OPTIONS,
+    MIN_GAMES_OPTIONS,
+    MIN_TSA_AUTO,
+    MIN_TSA_OPTIONS,
+    PLAYER_SORT_LABELS,
+    PLAYER_STATUS_LABELS,
+    POSITIONS,
+    STATS,
+    STATS_POR_CUARTO,
+    Dimension,
+    PlayerSort,
+    PlayerStatusFilter,
+    PositionGroup,
+    SortDir,
+    Stat,
+    parse_sort,
+)
 from nbastats.api.routers import teams as teams_router
 from nbastats.api.schemas import (
     GameDetailOut,
@@ -34,9 +55,12 @@ from nbastats.api.schemas import (
     LeaderOut,
     LeadersResponse,
     PlayerBoxScoreOut,
+    PlayerListItemOut,
+    PlayerListResponse,
     PlayerOut,
     PlayerRanksOut,
     PlayerSeasonOut,
+    PlayerStatusOut,
     RankedStat,
     RecentGameOut,
     SplitOut,
@@ -76,9 +100,33 @@ def health() -> dict:
 
 
 @app.get("/catalog", tags=["meta"])
-def catalog() -> dict:
-    """Qué se puede pedir. El frontend construye sus menús con esto."""
+def catalog(db: Session = Depends(get_db)) -> dict:
+    """Qué se puede pedir. El frontend construye sus menús con esto.
+
+    Las temporadas salen de los datos cargados, no de una constante: una lista
+    escrita a mano en el frontend se queda desfasada en cuanto entra una
+    temporada nueva, y nadie se acuerda de tocarla.
+    """
     return {
+        "seasons": q.list_seasons(db),
+        "player_filters": {
+            "statuses": [
+                {"value": s.value, "label": PLAYER_STATUS_LABELS[s]}
+                for s in PlayerStatusFilter
+            ],
+            "positions": [
+                {"value": p.value, "label": POSITIONS[p].label} for p in PositionGroup
+            ],
+            "sorts": [
+                {"value": s.value, "label": PLAYER_SORT_LABELS[s]} for s in PlayerSort
+            ],
+            "min_games": [{"value": v, "label": t} for v, t in MIN_GAMES_OPTIONS],
+            "min_fg3a": [{"value": v, "label": t} for v, t in MIN_FG3A_OPTIONS],
+            "min_fg3a_auto": MIN_FG3A_AUTO,
+            "min_tsa": [{"value": v, "label": t} for v, t in MIN_TSA_OPTIONS],
+            "min_tsa_auto": MIN_TSA_AUTO,
+            "countries": q.list_countries(db),
+        },
         "stats": [
             {
                 "value": s.value,
@@ -105,13 +153,141 @@ def catalog() -> dict:
 # =========================================================================
 
 
-@app.get("/players", tags=["jugadores"])
+@app.get("/players", response_model=PlayerListResponse, tags=["jugadores"])
 def list_players(
-    search: str = Query("", description="Búsqueda parcial por nombre"),
-    limit: int = Query(25, ge=1, le=100),
+    search: str = Query("", description="Búsqueda parcial por nombre, sin acentos"),
+    status: PlayerStatusFilter | None = Query(None, description="Situación del jugador"),
+    team_id: int | None = Query(
+        None,
+        description=(
+            "Equipo actual. Para quien no está en plantilla es el último "
+            "equipo conocido, así que el filtro devuelve también a sus exjugadores."
+        ),
+    ),
+    position: PositionGroup | None = Query(None),
+    season: str | None = Query(
+        None,
+        pattern=r"^\d{4}-\d{2}$",
+        description="Limita los promedios y los partidos a esta temporada",
+    ),
+    min_games: int = Query(0, ge=0, le=500, description="Suelo de partidos en el alcance"),
+    min_fg3a: float | None = Query(
+        None,
+        ge=0,
+        description=(
+            "Suelo de triples LANZADOS en el alcance (totales, no por partido: la "
+            "precisión de un porcentaje depende del número de intentos). Omitirlo "
+            f"NO significa cero, significa 'decide tú': la API pone {MIN_FG3A_AUTO:.0f} "
+            "cuando se ordena por % de triples. Para no filtrar nada, min_fg3a=0."
+        ),
+    ),
+    min_tsa: float | None = Query(
+        None,
+        ge=0,
+        description=(
+            "Suelo de intentos de tiro verdaderos (fga + 0,44·fta) en el alcance. "
+            f"Igual que min_fg3a: omitirlo deja que la API ponga {MIN_TSA_AUTO:.0f} "
+            "cuando se ordena por TS%."
+        ),
+    ),
+    country: str | None = Query(
+        None,
+        max_length=60,
+        description="País de la ficha oficial, tal cual lo escribe la NBA: 'USA', 'Serbia'",
+    ),
+    sort: str = Query(
+        PlayerSort.PARTIDOS.value,
+        description=(
+            "Uno o varios criterios separados por comas, cada uno "
+            "'clave' o 'clave:asc|desc'. Ej: 'edad:desc,puntos:asc'. "
+            f"Se aplican como máximo {MAX_CRITERIOS_ORDEN}."
+        ),
+    ),
+    direction: SortDir = Query(
+        SortDir.DESC,
+        alias="dir",
+        description="Dirección para los criterios que no la lleven escrita",
+    ),
+    # El tope da para la plantilla entera (1.030 jugadores en 5 temporadas):
+    # la consulta agrega una vista de ~8.000 filas y tarda decenas de
+    # milisegundos, así que paginar por obligación no compraría nada.
+    limit: int = Query(50, ge=1, le=1500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-) -> list[dict]:
-    return q.search_players(db, search, limit)
+) -> PlayerListResponse:
+    """Listado de jugadores con su situación, su equipo y sus promedios.
+
+    El estado NO es un campo de la base: la NBA solo publica Active/Inactive,
+    que no distingue al que se quedó sin equipo en verano del que lleva tres
+    años fuera. Se deriva cruzándolo con la última temporada en la que jugó
+    (ver `analysis.player_status`).
+
+    Los promedios corresponden al alcance pedido: con `season` son los de esa
+    temporada, sin él los de las cinco cargadas.
+    """
+    try:
+        criterios = parse_sort(sort, direction.value)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+    # Omitido no es cero: es "decide tú". Solo entonces entra el suelo
+    # automático, y únicamente si ese porcentaje participa en el orden.
+    ordenado_por = {c for c, _ in criterios}
+
+    auto3 = min_fg3a is None and PlayerSort.TRIPLES.value in ordenado_por
+    suelo_triples = MIN_FG3A_AUTO if auto3 else (min_fg3a or 0.0)
+
+    auto_ts = min_tsa is None and PlayerSort.TS.value in ordenado_por
+    suelo_tsa = MIN_TSA_AUTO if auto_ts else (min_tsa or 0.0)
+
+    datos = q.search_players(
+        db,
+        search,
+        limit,
+        offset=offset,
+        status=status.value if status else None,
+        team_id=team_id,
+        position=POSITIONS[position].db_word if position else None,
+        season=season,
+        min_games=min_games,
+        country=country,
+        min_fg3a=suelo_triples,
+        min_tsa=suelo_tsa,
+        criterios=criterios,
+    )
+
+    items = []
+    for f in datos["items"]:
+        estado = describe_status(
+            f["roster_status"],
+            f["ultima_nba"],
+            datos["latest_season"],
+            f["current_team_name"],
+        )
+        items.append(
+            PlayerListItemOut(
+                status=PlayerStatusOut(
+                    key=estado.key,
+                    label=estado.label,
+                    note=estado.note,
+                    on_roster=estado.on_roster,
+                    team_label=estado.team_label,
+                ),
+                **{k: v for k, v in f.items() if k in PlayerListItemOut.model_fields},
+            )
+        )
+
+    return PlayerListResponse(
+        total=datos["total"],
+        shown=len(items),
+        latest_season=datos["latest_season"],
+        season=season,
+        min_fg3a_applied=suelo_triples,
+        min_fg3a_auto=auto3,
+        min_tsa_applied=suelo_tsa,
+        min_tsa_auto=auto_ts,
+        items=items,
+    )
 
 
 @app.get("/players/{player_id}", response_model=PlayerOut, tags=["jugadores"])
@@ -119,7 +295,24 @@ def get_player(player_id: int, db: Session = Depends(get_db)) -> PlayerOut:
     datos = q.get_player(db, player_id)
     if not datos:
         raise HTTPException(404, f"No existe el jugador {player_id}")
-    return PlayerOut(**datos)
+
+    temporadas = datos.get("seasons") or []
+    estado = describe_status(
+        datos.get("roster_status"),
+        temporadas[-1] if temporadas else None,
+        q.latest_season(db),
+        datos.get("current_team_name"),
+    )
+    return PlayerOut(
+        **datos,
+        status=PlayerStatusOut(
+            key=estado.key,
+            label=estado.label,
+            note=estado.note,
+            on_roster=estado.on_roster,
+            team_label=estado.team_label,
+        ),
+    )
 
 
 @app.get(

@@ -52,7 +52,8 @@ def list_teams(session: Session, season: str | None = None) -> list[dict]:
     sql = text("""
         SELECT t.team_id, t.abbreviation, t.full_name, t.city, t.nickname,
                t.conference, t.division, t.arena,
-               s.wins, s.losses, s.win_pct, s.playoff_rank, s.diff_points_pg
+               s.wins, s.losses, s.win_pct, s.playoff_rank, s.diff_points_pg,
+               s.home_record, s.road_record
         FROM teams t
         LEFT JOIN team_standings s
                ON s.team_id = t.team_id

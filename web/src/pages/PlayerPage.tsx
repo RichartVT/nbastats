@@ -25,6 +25,18 @@ export function PlayerPage() {
   const [dimension, setDimension] = useState('home_away')
 
   const catalogo = useQuery({ queryKey: ['catalog'], queryFn: api.catalog })
+
+  // Por cuarto no hay tasas: extrapolar a 36 minutos desde los 4 que alguien
+  // jugó en un tercer cuarto da un número sin sentido, y la API lo rechaza. Se
+  // filtra el menú en vez de dejar elegir algo que va a fallar, y si ya había
+  // una tasa seleccionada al cambiar de dimensión se cae a puntos, en lugar de
+  // dejar la pantalla en error hasta que el usuario adivine por qué.
+  const esPorCuarto = dimension === 'period'
+  const statsDisponibles = (catalogo.data?.stats ?? []).filter(
+    (s) => !esPorCuarto || !s.is_rate,
+  )
+  const statEfectivo =
+    esPorCuarto && !statsDisponibles.some((s) => s.value === stat) ? 'pts' : stat
   const jugador = useQuery({
     queryKey: ['player', playerId],
     queryFn: () => api.player(playerId),
@@ -53,18 +65,15 @@ export function PlayerPage() {
     placeholderData: (prev) => prev,
   })
   const splits = useQuery({
-    queryKey: ['splits', playerId, dimension, stat],
-    queryFn: () => api.splits(playerId, dimension, stat),
+    queryKey: ['splits', playerId, dimension, statEfectivo],
+    queryFn: () => api.splits(playerId, dimension, statEfectivo),
     placeholderData: (prev) => prev,
   })
 
   if (jugador.error) return <ErrorBox error={jugador.error} />
   if (!jugador.data) return <Loading />
 
-  const opcionesStat = (catalogo.data?.stats ?? []).map((s) => ({
-    value: s.value,
-    label: s.label,
-  }))
+  const opcionesStat = statsDisponibles.map((s) => ({ value: s.value, label: s.label }))
   const opcionesDim = (catalogo.data?.dimensions ?? []).map((d) => ({
     value: d.value,
     label: d.label,
@@ -184,7 +193,12 @@ export function PlayerPage() {
       {/* --- A partir de aquí, análisis --- */}
       <div className="flex flex-wrap items-center gap-4 pt-2">
         <h2 className="text-sm font-semibold">Análisis</h2>
-        <Select label="Estadística" value={stat} onChange={setStat} options={opcionesStat} />
+        <Select
+          label="Estadística"
+          value={statEfectivo}
+          onChange={setStat}
+          options={opcionesStat}
+        />
         <Select label="Split por" value={dimension} onChange={setDimension} options={opcionesDim} />
       </div>
 

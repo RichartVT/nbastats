@@ -10,11 +10,19 @@ from __future__ import annotations
 
 import datetime as dt
 from collections import defaultdict
+from dataclasses import dataclass
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from nbastats.api.catalog import DIAS, MESES, STATS, Dimension, Stat
+from nbastats.api.catalog import (
+    DIAS,
+    MAX_CRITERIOS_ORDEN,
+    MESES,
+    STATS,
+    Dimension,
+    Stat,
+)
 from nbastats.ingest.transforms import format_seconds
 
 # Los partidos de pretemporada nunca entran; ya se excluyen en la vista.
@@ -32,25 +40,314 @@ def _filtro_temporadas(seasons: list[str] | None) -> tuple[str, dict]:
 # =========================================================================
 
 
-def search_players(session: Session, query: str, limit: int = 25) -> list[dict]:
-    sql = text("""
-        SELECT p.player_id, p.full_name, p.position, p.birthdate,
-               MIN(r.season_id) AS primera, MAX(r.season_id) AS ultima,
-               SUM(CASE WHEN r.season_type='regular' THEN 1 ELSE 0 END) AS partidos
-        FROM players p
-        JOIN mv_player_game_rates r USING (player_id)
-        -- immutable_unaccent() hace que "Jokic" encuentre a "Nikola Jokić" y
-        -- "Doncic" a "Dončić". Nadie teclea los diacríticos al buscar.
-        WHERE (:q = '' OR lower(immutable_unaccent(p.full_name))
-                          LIKE lower(immutable_unaccent(:like)))
-        GROUP BY p.player_id, p.full_name, p.position, p.birthdate
-        ORDER BY partidos DESC, p.full_name
-        LIMIT :limit
-    """)
+# Las expresiones derivadas viven aquí y no incrustadas en el SELECT porque el
+# ORDER BY necesita las MISMAS. Postgres deja ordenar por un alias de salida
+# suelto, pero no por una expresión que lo contenga —`ROUND(pts_per_game, 1)`
+# no compila—, así que o se comparten o se escriben dos veces y se separan.
+_CALCULADAS: dict[str, str] = {
+    "min_per_game": "(a.segundos / 60.0 / NULLIF(a.partidos, 0))",
+    "pts_per_game": "(a.pts::numeric / NULLIF(a.partidos, 0))",
+    "reb_per_game": "(a.reb::numeric / NULLIF(a.partidos, 0))",
+    "ast_per_game": "(a.ast::numeric / NULLIF(a.partidos, 0))",
+    "tsa": "(a.fga + 0.44 * a.fta)",
+    "ts_pct": "(a.pts / NULLIF(2 * (a.fga + 0.44 * a.fta), 0))",
+    "fg3_pct": "(a.fg3m::numeric / NULLIF(a.fg3a, 0))",
+    "fg3a_per_game": "(a.fg3a::numeric / NULLIF(a.partidos, 0))",
+    # Años cumplidos, no la fecha de nacimiento: es lo que se enseña en la
+    # columna y lo que hace que "ordenar por edad y luego por puntos" agrupe a
+    # todos los de 30 en vez de dejar 300 grupos de uno.
+    "edad": "((CURRENT_DATE - p.birthdate) / 365.25)",
+}
+
+
+@dataclass(frozen=True)
+class OrdenDef:
+    exacta: str
+    """Expresión con toda la precisión que hay en la base."""
+
+    mostrada: str
+    """La misma, redondeada a lo que el usuario ve en pantalla."""
+
+    invertir: bool = False
+    """Para las columnas donde "de mayor a menor" es ASC en SQL: el nombre
+    (A-Z es lo natural, no Z-A)."""
+
+
+# Orden del listado. El cliente manda claves de este diccionario y direcciones,
+# nunca un trozo de SQL: es lo que permite construir el ORDER BY con f-string
+# sin abrir un hueco de inyección.
+_ORDEN_JUGADORES: dict[str, OrdenDef] = {
+    "nombre": OrdenDef("p.full_name", "p.full_name", invertir=True),
+    "edad": OrdenDef(_CALCULADAS["edad"], f"FLOOR({_CALCULADAS['edad']})"),
+    "altura": OrdenDef("p.height_cm", "p.height_cm"),
+    "partidos": OrdenDef("a.partidos", "a.partidos"),
+    "minutos": OrdenDef(_CALCULADAS["min_per_game"], f"ROUND({_CALCULADAS['min_per_game']}, 1)"),
+    "puntos": OrdenDef(_CALCULADAS["pts_per_game"], f"ROUND({_CALCULADAS['pts_per_game']}, 1)"),
+    "rebotes": OrdenDef(_CALCULADAS["reb_per_game"], f"ROUND({_CALCULADAS['reb_per_game']}, 1)"),
+    "asistencias": OrdenDef(
+        _CALCULADAS["ast_per_game"], f"ROUND({_CALCULADAS['ast_per_game']}, 1)"
+    ),
+    "ts": OrdenDef(_CALCULADAS["ts_pct"], f"ROUND({_CALCULADAS['ts_pct']}, 3)"),
+    "triples": OrdenDef(_CALCULADAS["fg3_pct"], f"ROUND({_CALCULADAS['fg3_pct']}, 3)"),
+}
+
+def _orden(criterios: list[tuple[str, str]]) -> str:
+    """Construye el ORDER BY de una cadena de criterios.
+
+    LA REGLA QUE HACE QUE ENCADENAR SIRVA DE ALGO: los criterios que NO son el
+    último ordenan por el valor REDONDEADO A LO QUE SE VE, y el último por el
+    valor exacto.
+
+    Sin eso, "por edad y luego por puntos" no cambiaría ni una fila: la edad
+    exacta es la fecha de nacimiento, casi única por jugador, así que no habría
+    dos empatados y el segundo criterio no llegaría a aplicarse nunca. El
+    usuario pediría una combinación y vería exactamente la misma lista.
+
+    Redondear solo los criterios intermedios mantiene lo otro que importa: con
+    un único criterio, el orden sigue siendo el exacto, sin agrupar por el
+    decimal que se enseña.
+    """
+    criterios = criterios[:MAX_CRITERIOS_ORDEN] or [("partidos", "desc")]
+
+    partes = []
+    for i, (clave, direccion) in enumerate(criterios):
+        d = _ORDEN_JUGADORES.get(clave)
+        if d is None:
+            continue
+        es_ultimo = i == len(criterios) - 1
+        expresion = d.exacta if es_ultimo else d.mostrada
+        descendente = (direccion != "asc") != d.invertir
+        # NULLS LAST en las dos direcciones: un jugador sin porcentaje de tiro
+        # no es el peor tirador de la liga, es un jugador del que no hay dato,
+        # y encabezar con él la lista ascendente sería leerlo como lo primero.
+        partes.append(f"{expresion} {'DESC' if descendente else 'ASC'} NULLS LAST")
+
+    if not partes:
+        partes = [f"{_ORDEN_JUGADORES['partidos'].exacta} DESC NULLS LAST"]
+
+    # Desempate final estable: sin él, dos jugadores con los mismos valores
+    # pueden intercambiarse entre peticiones y hacer que "Mostrar más" repita
+    # o se salte filas.
+    return ", ".join(partes) + ", p.full_name, p.player_id"
+
+
+# Traducción del estado mostrable a SQL, para poder filtrar por él sin traerse
+# los 1.030 jugadores a Python. Las etiquetas y las notas las sigue escribiendo
+# `analysis.player_status`; aquí solo está el predicado, y `test_player_status`
+# comprueba que los dos digan lo mismo.
+_CONDICION_ESTADO = {
+    "activo": "p.roster_status = 'Active'",
+    "agente_libre": (
+        "p.roster_status IS DISTINCT FROM 'Active' "
+        "AND c.ultima_nba = CAST(:latest AS varchar)"
+    ),
+    "fuera_liga": (
+        "p.roster_status IS DISTINCT FROM 'Active' "
+        "AND c.ultima_nba < CAST(:latest AS varchar)"
+    ),
+}
+
+
+def latest_season(session: Session) -> str:
+    """La temporada más reciente CON PARTIDOS CARGADOS.
+
+    No se lee de la tabla `seasons`: ahí puede haber una temporada declarada
+    cuya ingesta todavía no ha corrido, y entonces todo el mundo aparecería
+    como "fuera de la liga" por un dato que no ha llegado.
+    """
+    return session.execute(
+        text("SELECT MAX(season_id) FROM mv_player_season")
+    ).scalar() or ""
+
+
+def list_seasons(session: Session) -> list[str]:
+    """Temporadas con partidos, de la más reciente a la más antigua."""
     filas = session.execute(
-        sql, {"q": query, "like": f"%{query}%", "limit": limit}
+        text("SELECT DISTINCT season_id FROM mv_player_season ORDER BY season_id DESC")
+    ).scalars().all()
+    return list(filas)
+
+
+def list_countries(session: Session) -> list[dict]:
+    """Países presentes en la plantilla de jugadores, con cuántos hay de cada uno.
+
+    Es el campo COUNTRY de la ficha oficial: el país de origen que publica la
+    NBA, no necesariamente al que representa en competición internacional. Se
+    devuelve tal cual lo escribe la liga ("USA", "Bosnia and Herzegovina") en
+    vez de traducirlo: una tabla de traducción a mano se desincroniza en cuanto
+    aparece un país nuevo, y media lista en español y media en inglés se lee
+    peor que toda en el idioma de la fuente.
+    """
+    filas = session.execute(
+        text("""
+            SELECT p.country, COUNT(*) AS n
+            FROM players p
+            WHERE p.country IS NOT NULL
+              AND EXISTS (SELECT 1 FROM mv_player_season s
+                          WHERE s.player_id = p.player_id)
+            GROUP BY p.country
+            ORDER BY p.country
+        """)
     ).mappings().all()
     return [dict(f) for f in filas]
+
+
+def search_players(
+    session: Session,
+    query: str = "",
+    limit: int = 25,
+    *,
+    offset: int = 0,
+    status: str | None = None,
+    team_id: int | None = None,
+    position: str | None = None,
+    season: str | None = None,
+    min_games: int = 0,
+    country: str | None = None,
+    min_fg3a: float = 0,
+    min_tsa: float = 0,
+    criterios: list[tuple[str, str]] | None = None,
+) -> dict:
+    """Listado de jugadores con su situación actual, filtrable.
+
+    Devuelve `{"total", "latest_season", "items"}`. El total es el de jugadores
+    que cumplen los filtros ANTES del límite: sin él, una lista recortada a 100
+    se lee como si esos 100 fueran todos.
+
+    Se agregan DOS cosas distintas, y la diferencia importa:
+
+    - `carrera` recorre todas las temporadas cargadas y sirve para una sola
+      cosa: cuándo jugó por última vez, que es lo que decide su estado.
+    - `alcance` respeta el filtro de temporada, y de ahí salen los números.
+
+    Separarlas es lo que evita que, al filtrar por 2022-23, todos los que no
+    están en plantilla parezcan llevar tres años fuera de la liga: dentro de
+    ese filtro su última temporada es 2022-23 para todos.
+    """
+    condiciones: list[str] = [
+        # immutable_unaccent() hace que "Jokic" encuentre a "Nikola Jokić" y
+        # "Doncic" a "Dončić". Nadie teclea los diacríticos al buscar.
+        "(:q = '' OR lower(immutable_unaccent(p.full_name))"
+        " LIKE lower(immutable_unaccent(:like)))",
+        "(:min_games = 0 OR a.partidos >= :min_games)",
+        "(CAST(:team_id AS bigint) IS NULL OR p.current_team_id = :team_id)",
+        # 'Guard' casa también con 'Guard-Forward', que es lo que se quiere: un
+        # escolta-alero es las dos cosas, no una tercera.
+        "(CAST(:position AS varchar) IS NULL OR p.position LIKE :position_like)",
+        "(CAST(:country AS varchar) IS NULL OR p.country = :country)",
+        # Los suelos van sobre los intentos TOTALES del alcance: es el n del
+        # que depende la precisión del porcentaje.
+        "(:min_fg3a = 0 OR a.fg3a >= :min_fg3a)",
+        f"(:min_tsa = 0 OR {_CALCULADAS['tsa']} >= :min_tsa)",
+    ]
+    if status in _CONDICION_ESTADO:
+        condiciones.append(f"({_CONDICION_ESTADO[status]})")
+
+    orden = _orden(criterios or [])
+
+    C = _CALCULADAS
+    sql = text(f"""
+        WITH carrera AS (
+            SELECT player_id, MAX(season_id) AS ultima_nba
+            FROM mv_player_season
+            GROUP BY player_id
+        ),
+        alcance AS (
+            SELECT s.player_id,
+                   MIN(s.season_id) AS primera,
+                   MAX(s.season_id) AS ultima,
+                   COUNT(DISTINCT s.season_id) AS temporadas,
+                   ARRAY_AGG(DISTINCT t.abbreviation) AS equipos,
+                   COALESCE(SUM(s.games_played)
+                       FILTER (WHERE s.season_type = 'regular'), 0) AS partidos,
+                   COALESCE(SUM(s.games_played)
+                       FILTER (WHERE s.season_type <> 'regular'), 0) AS partidos_post,
+                   -- Los promedios salen de los TOTALES, no de promediar los
+                   -- promedios de cada fila: un traspasado tiene dos filas con
+                   -- distinto número de partidos, y la media de las dos medias
+                   -- no es su media.
+                   SUM(s.pts) FILTER (WHERE s.season_type = 'regular') AS pts,
+                   SUM(s.reb) FILTER (WHERE s.season_type = 'regular') AS reb,
+                   SUM(s.ast) FILTER (WHERE s.season_type = 'regular') AS ast,
+                   SUM(s.fga) FILTER (WHERE s.season_type = 'regular') AS fga,
+                   SUM(s.fta) FILTER (WHERE s.season_type = 'regular') AS fta,
+                   SUM(s.fg3m) FILTER (WHERE s.season_type = 'regular') AS fg3m,
+                   SUM(s.fg3a) FILTER (WHERE s.season_type = 'regular') AS fg3a,
+                   SUM(s.seconds_played)
+                       FILTER (WHERE s.season_type = 'regular') AS segundos
+            FROM mv_player_season s
+            JOIN teams t ON t.team_id = s.team_id
+            WHERE (CAST(:season AS varchar) IS NULL OR s.season_id = :season)
+            GROUP BY s.player_id
+        )
+        SELECT p.player_id, p.full_name, p.position, p.birthdate,
+               p.height_cm, p.weight_kg, p.country,
+               p.jersey_number, p.roster_status, p.season_experience,
+               p.draft_year, p.draft_round, p.draft_number,
+               p.current_team_id,
+               ct.abbreviation AS current_team_abbr,
+               ct.full_name    AS current_team_name,
+               c.ultima_nba,
+               a.primera, a.ultima, a.temporadas, a.equipos,
+               a.partidos, a.partidos_post,
+               {C['pts_per_game']}::numeric(6,2) AS pts_per_game,
+               {C['reb_per_game']}::numeric(6,2) AS reb_per_game,
+               {C['ast_per_game']}::numeric(6,2) AS ast_per_game,
+               {C['min_per_game']}::numeric(5,2) AS min_per_game,
+               {C['ts_pct']}::numeric(6,4) AS ts_pct,
+               -- El porcentaje de triples viaja SIEMPRE con los intentos por
+               -- partido. Un 45% con 2 intentos y un 38% con 10 no describen la
+               -- misma habilidad, y el porcentaje solo no permite distinguirlos.
+               {C['fg3_pct']}::numeric(6,4) AS fg3_pct,
+               {C['fg3a_per_game']}::numeric(5,2) AS fg3a_per_game,
+               a.fg3a,
+               {C['tsa']}::int AS tsa,
+               COUNT(*) OVER () AS total
+        FROM players p
+        JOIN alcance a ON a.player_id = p.player_id
+        JOIN carrera c ON c.player_id = p.player_id
+        LEFT JOIN teams ct ON ct.team_id = p.current_team_id
+        WHERE {" AND ".join(condiciones)}
+        ORDER BY {orden}
+        LIMIT :limit OFFSET :offset
+    """)
+
+    ultima_liga = latest_season(session)
+    filas = session.execute(
+        sql,
+        {
+            "q": query,
+            "like": f"%{query}%",
+            "season": season,
+            "team_id": team_id,
+            "position": position,
+            "position_like": f"%{position}%" if position else None,
+            "min_games": min_games,
+            "country": country,
+            "min_fg3a": min_fg3a,
+            "min_tsa": min_tsa,
+            "latest": ultima_liga,
+            "limit": limit,
+            "offset": offset,
+        },
+    ).mappings().all()
+
+    items = []
+    for f in filas:
+        d = dict(f)
+        d.pop("total", None)
+        if d.get("birthdate"):
+            d["age"] = round((dt.date.today() - d["birthdate"]).days / 365.25, 1)
+        else:
+            d["age"] = None
+        d["equipos"] = [e for e in (d.get("equipos") or []) if e]
+        items.append(d)
+
+    return {
+        "total": filas[0]["total"] if filas else 0,
+        "latest_season": ultima_liga,
+        "items": items,
+    }
 
 
 def get_player(session: Session, player_id: int) -> dict | None:

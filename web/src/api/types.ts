@@ -3,14 +3,97 @@
 export type Reliability = 'alta' | 'media' | 'baja' | 'insuficiente'
 export type TrendDirection = 'alza' | 'declive' | 'estable' | 'indeterminada'
 
-export interface PlayerSearchResult {
+export type PlayerStatusKey = 'activo' | 'agente_libre' | 'fuera_liga' | 'sin_datos'
+
+/** Situación del jugador, derivada en el backend. `team_label` no es
+ *  decorativo: dice si el equipo que acompaña a la fila es el ACTUAL o el
+ *  ÚLTIMO, y esa palabra es lo único que separa un fichaje de un exjugador. */
+export interface PlayerStatus {
+  key: PlayerStatusKey
+  label: string
+  note: string
+  on_roster: boolean
+  team_label: string
+}
+
+export interface PlayerListItem {
   player_id: number
   full_name: string
+  status: PlayerStatus
+
   position: string | null
+  jersey_number: string | null
   birthdate: string | null
+  age: number | null
+  height_cm: number | null
+  weight_kg: number | null
+  country: string | null
+  draft_year: number | null
+  draft_round: number | null
+  draft_number: number | null
+  season_experience: number | null
+
+  current_team_id: number | null
+  current_team_abbr: string | null
+  current_team_name: string | null
+
   primera: string
   ultima: string
+  ultima_nba: string
+  temporadas: number
+  equipos: string[]
+
+  // Referidos al alcance pedido: con filtro de temporada son los de esa
+  // temporada, sin él los de las cinco cargadas.
   partidos: number
+  partidos_post: number
+  min_per_game: number | null
+  pts_per_game: number | null
+  reb_per_game: number | null
+  ast_per_game: number | null
+  ts_pct: number | null
+  // El porcentaje de triples nunca se enseña solo: sin los intentos no se
+  // distingue al tirador de volumen del que metió dos de dos.
+  fg3_pct: number | null
+  fg3a_per_game: number | null
+  /** Intentos TOTALES del alcance: el n del que depende la precisión del
+   *  porcentaje. 46% en 79 intentos y 46% en 1.436 no valen lo mismo. */
+  fg3a: number | null
+  tsa: number | null
+}
+
+export interface PlayerListResponse {
+  total: number
+  shown: number
+  latest_season: string
+  season: string | null
+  /** Suelo de triples por partido en efecto, lo haya pedido el cliente o no. */
+  min_fg3a_applied: number
+  /** True si lo puso la API porque se ordenaba por % de triples. */
+  min_fg3a_auto: boolean
+  min_tsa_applied: number
+  min_tsa_auto: boolean
+  items: PlayerListItem[]
+}
+
+/** Filtros del listado. Todo opcional: sin nada, salen todos. */
+export interface PlayerFilters {
+  search?: string
+  status?: string
+  team_id?: number
+  position?: string
+  season?: string
+  min_games?: number
+  /** Suelo de triples lanzados en el alcance (totales, no por partido). */
+  min_fg3a?: number
+  /** Suelo de intentos de tiro verdaderos (fga + 0,44·fta). */
+  min_tsa?: number
+  country?: string
+  /** Uno o varios criterios: 'puntos' o 'edad:desc,puntos:asc'. */
+  sort?: string
+  dir?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
 }
 
 export interface Player {
@@ -34,6 +117,7 @@ export interface Player {
   draft_round: number | null
   draft_number: number | null
   school: string | null
+  status: PlayerStatus
 }
 
 export interface GameType {
@@ -105,6 +189,9 @@ export interface TeamSummary {
   win_pct: number | null
   playoff_rank: number | null
   diff_points_pg: number | null
+  /** Formato "31-10", tal cual lo publica la liga. */
+  home_record: string | null
+  road_record: string | null
 }
 
 export interface RosterEntry {
@@ -433,6 +520,11 @@ export interface CatalogDimension {
   label: string
   levels: number
   warning: string
+}
+
+export interface CatalogOption {
+  value: string
+  label: string
 }
 
 export interface Catalog {

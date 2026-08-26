@@ -97,11 +97,12 @@ function TablaConferencia({ titulo, filas }: { titulo: string; filas: Standing[]
         </table>
       </div>
       <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-        La línea marca el corte del play-in: del 1 al 10 entran, del 11 en adelante no.
+        La línea marca el corte del play-in: del 1 al 10.
       </p>
     </Card>
   )
 }
+
 
 export function StandingsPage() {
   const [season, setSeason] = useState(TEMPORADAS[0])

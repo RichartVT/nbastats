@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { GameType } from '../api/types'
+import type { GameType, PlayerStatus } from '../api/types'
 
 /**
  * Imágenes enlazadas al CDN de la NBA.
@@ -111,6 +111,44 @@ export function TeamLogo({
       className="shrink-0 object-contain"
       style={{ width: size, height: size }}
     />
+  )
+}
+
+/**
+ * Situación del jugador: en plantilla, sin equipo o fuera de la liga.
+ *
+ * Punto Y palabra, nunca solo el color: los tonos de estado no llegan a 3:1 de
+ * contraste en modo claro, y quien no distingue verde de gris se quedaría sin
+ * la información. El `title` lleva la nota completa del backend, que es donde
+ * está el matiz — "puede estar retirado o jugando fuera de la NBA".
+ */
+const COLOR_ESTADO: Record<string, string> = {
+  activo: 'var(--status-good)',
+  agente_libre: 'var(--status-warning)',
+  fuera_liga: 'var(--text-muted)',
+  sin_datos: 'var(--text-muted)',
+}
+
+export function StatusBadge({
+  status,
+  size = 'sm',
+}: {
+  status: PlayerStatus
+  size?: 'sm' | 'md'
+}) {
+  const color = COLOR_ESTADO[status.key] ?? 'var(--text-muted)'
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap ${
+        size === 'md' ? 'text-sm' : 'text-xs'
+      }`}
+      title={status.note}
+    >
+      <span aria-hidden style={{ color, lineHeight: 1 }}>
+        ●
+      </span>
+      <span style={{ color: 'var(--text-secondary)' }}>{status.label}</span>
+    </span>
   )
 }
 
