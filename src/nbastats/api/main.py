@@ -54,6 +54,8 @@ from nbastats.api.schemas import (
     GameTypeOut,
     LeaderOut,
     LeadersResponse,
+    OfficialOut,
+    PeriodScoreOut,
     PlayerBoxScoreOut,
     PlayerListItemOut,
     PlayerListResponse,
@@ -394,6 +396,16 @@ def get_splits(
     if not jugador:
         raise HTTPException(404, f"No existe el jugador {player_id}")
 
+    # Por cuarto no hay tasas, y no es un hueco: extrapolar a 36 minutos desde
+    # los 4 que alguien jugó en un tercer cuarto da un número sin sentido. Se
+    # rechaza la petición en vez de devolver nulos.
+    if dimension is Dimension.PERIOD and stat not in STATS_POR_CUARTO:
+        raise HTTPException(
+            422,
+            f"'{stat.value}' es una tasa y no existe por cuarto. "
+            f"Válidas: {', '.join(s.value for s in STATS_POR_CUARTO)}",
+        )
+
     grupos = q.get_split_groups(db, player_id, stat, dimension, seasons)
     estimaciones = analyze_splits(grupos)
     salida = [SplitOut.from_estimate(e) for e in estimaciones.values()]
@@ -517,10 +529,12 @@ def get_game(game_id: str, db: Session = Depends(get_db)) -> GameDetailOut:
         )
 
     jugadores = q.get_game_player_stats(db, game_id)
+    cuartos = q.get_game_player_periods(db, game_id)
     por_equipo: dict[int, list[PlayerBoxScoreOut]] = {}
     for j in jugadores:
         fila = PlayerBoxScoreOut(
-            **{k: v for k, v in j.items() if k in PlayerBoxScoreOut.model_fields}
+            points_by_period=cuartos.get(j["player_id"], {}),
+            **{k: v for k, v in j.items() if k in PlayerBoxScoreOut.model_fields},
         )
         por_equipo.setdefault(j["team_id"], []).append(fila)
 
@@ -538,6 +552,9 @@ def get_game(game_id: str, db: Session = Depends(get_db)) -> GameDetailOut:
     )
 
     return GameDetailOut(
+        periods=[PeriodScoreOut(**p) for p in q.get_game_periods(db, game_id)],
+        officials=[OfficialOut(**o) for o in q.get_game_officials(db, game_id)],
+        arena_name=cabecera["arena_name"],
         game_id=cabecera["game_id"],
         date=cabecera["date"],
         season_id=cabecera["season_id"],

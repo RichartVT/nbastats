@@ -584,6 +584,12 @@ class PlayerBoxScoreOut(BaseModel):
     plus_minus: int | None = None
 
     # Avanzadas
+    # Puntos por periodo: {"1": 8, "2": 0, "4": 11}. Diccionario y no lista
+    # porque un periodo AUSENTE significa "no jugó ese cuarto", que no es lo
+    # mismo que anotar cero — y una lista de longitud fija obligaría a elegir
+    # entre confundir las dos cosas o inventar un centinela.
+    points_by_period: dict[int, int] = Field(default_factory=dict)
+
     ts_pct: float | None = None
     efg_pct: float | None = None
     usg_pct: float | None = None
@@ -631,15 +637,45 @@ class TeamBoxScoreOut(BaseModel):
     rest_days: int | None = None
     is_back_to_back: bool | None = None
 
+    # Récord con el que el equipo LLEGABA a este partido, sin contarlo. Es lo
+    # que convierte un resultado en una historia: "ganó por 20" dice poco, "el
+    # 12-38 ganó por 20 al 40-10" lo dice todo.
+    wins_before: int | None = None
+    losses_before: int | None = None
+
     players: list[PlayerBoxScoreOut] = Field(default_factory=list)
+
+
+class PeriodScoreOut(BaseModel):
+    """Puntos de un equipo en un periodo.
+
+    Es solo el marcador, no el box score del cuarto: el desglose completo por
+    periodo exigiría play-by-play o una petición por cuarto. `is_overtime` lo
+    dice la fuente, no se deduce de `period > 4`.
+    """
+
+    team_id: int
+    period: int
+    points: int
+    is_overtime: bool
+
+
+class OfficialOut(BaseModel):
+    official_id: int
+    name: str
+    jersey_number: str | None = None
 
 
 class GameDetailOut(BaseModel):
     """Todo lo que sabemos de un partido.
 
-    No hay más en la base: sin play-by-play, no existe desglose por cuarto,
-    ni secuencia de anotación, ni datos de tiro por zona. `CAPABILITIES.md` §2
-    lista lo que haría falta cargar para cada una de esas cosas.
+    `periods` llega VACÍO en los partidos cuyo resumen aún no se ha descargado
+    (`nbastats ingest-summaries`). Vacío significa "no lo tenemos", no "no hubo
+    cuartos", y el frontend debe distinguirlo: un marcador por cuartos a cero
+    sería un dato falso.
+
+    Sigue sin haber play-by-play, así que no hay secuencia de anotación ni
+    datos de tiro por zona. `CAPABILITIES.md` §2 lista lo que haría falta.
     """
 
     game_id: str
@@ -650,6 +686,10 @@ class GameDetailOut(BaseModel):
     ot_periods: int = 0
     is_neutral_site: bool = False
     attendance: int | None = None
+    arena_name: str | None = None
+
+    periods: list[PeriodScoreOut] = Field(default_factory=list)
+    officials: list[OfficialOut] = Field(default_factory=list)
 
     home: TeamBoxScoreOut
     away: TeamBoxScoreOut

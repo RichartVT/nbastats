@@ -34,6 +34,43 @@ PIE.
 
 (La **titularidad** no está: ver §2.)
 
+**Desglose por cuarto**
+puntos, rebotes, asistencias, robos, tapones, pérdidas, +/- y minutos de cada
+jugador **en cada periodo** (`player_period_stats`, 481.863 filas). Las
+prórrogas van numeradas desde 1: el periodo 5 se lee como "1ª prórroga".
+
+Es, de todo lo que hay por debajo del partido, **el dato con mejor muestra**: un
+titular acumula ~70 cuartos cuartos por temporada y ~350 en cinco, muy por
+encima del umbral de fiabilidad alta (n≥40). Está disponible como una dimensión
+más de los splits, así que llega con encogimiento bayesiano, intervalo y
+corrección por comparaciones múltiples como cualquier otra.
+
+> **Los puntos de un cuarto no se leen sin sus minutos.** El cuarto cuarto
+> mezcla dos cosas opuestas: cerrar partidos igualados y estar sentado en las
+> palizas. Jokić anota 8,1 en el primer cuarto y 6,0 en el cuarto, pero es que
+> juega 10,6 y 7,2 minutos respectivamente — y aparece en 357 primeros cuartos
+> frente a 295 cuartos cuartos. El propio `n` delata el sesgo. Por eso los
+> minutos son una estadística seleccionable de esta dimensión.
+
+**No hay tasas por cuarto, y es deliberado.** `player_period_stats` guarda
+totales y segundos, nada más. Extrapolar a 36 minutos desde los 4 que alguien
+jugó en un tercer cuarto produce los mismos disparates que el `pace` de jugador.
+Pedir `pts_per_36` con dimensión "cuarto" devuelve 422, no una columna de nulos.
+
+**Contexto del partido**
+marcador por cuarto de cada equipo, asistencia, pabellón, árbitros y periodos de
+prórroga reales. Faltan en 3 partidos de 6.602 (`0022500259/260/261`, 19-11-2025):
+la NBA devuelve su resumen con todos los campos a `null`. Es un hueco de la
+fuente y la ficha lo dice en pantalla en vez de pintar ceros.
+
+**Récord con el que cada equipo llegaba a un partido**
+victorias y derrotas ANTES de ese partido, sin contarlo
+(`team_game_stats.wins_before` / `losses_before`, derivadas en `derive.sql`).
+Se cuentan dentro del mismo tipo de temporada: en un partido de playoffs es el
+recorrido en esos playoffs, no el 58-24 de la fase regular. Validado: el récord
+tras el último partido de cada equipo coincide con `team_standings` en los 30
+equipos.
+
 **Agregado por cualquier dimensión que viva en `games` o `team_game_stats`**
 temporada, tipo de temporada (regular / play-in / playoffs), mes, día de la
 semana, local/visitante, rival, días de descanso, back-to-back, victoria/derrota,
@@ -92,6 +129,17 @@ diferencial del subconjunto recalculados. Cada partido enlaza a su ficha.
 Todo lo de esta lista necesita **play-by-play o datos de tiro**, que hoy no
 están cargados.
 
+> **Esta sección se ha vaciado casi entera.** El rendimiento por cuarto salió de
+> aquí con `PlayerGameLogs(Period=N)` (93 peticiones), y el play-by-play —ya
+> cargado, 3.251.908 eventos en los 6.602 partidos— se llevó por delante el
+> clutch, las rachas, los quintetos, quién asiste a quién y las zonas de tiro.
+> Ver §7.
+>
+> Cuidado con una distinción que esto NO borra: que el dato exista no significa
+> que la pregunta tenga respuesta sólida. El clutch, por ejemplo, pasa del
+> límite A al **límite B**: ahora se puede calcular, y sigue sin haber muestra
+> para afirmar casi nada con él. Ver §3.
+
 | Pregunta | Por qué no |
 |---|---|
 | "¿Cuánto anota en el clutch (últimos 5 min, ≤5 de diferencia)?" | El box score no tiene marca de tiempo. Haría falta play-by-play. |
@@ -103,7 +151,9 @@ están cargados.
 | "¿Anotó 10 puntos seguidos?" | Rachas intra-partido: play-by-play. |
 | "¿Cómo le fue tras un tiempo muerto?" | Play-by-play. |
 | "¿Rinde mejor como titular que saliendo del banquillo?" | `PlayerGameLogs` no marca quién fue titular. Requeriría una petición por partido (~6.600) en vez de una por temporada. |
-| "¿Cuántos partidos se perdió por lesión?" | Solo aparecen los jugadores que jugaron: no hay filas de DNP ni motivo. Misma fuente y mismo coste que la anterior. |
+| "¿Cuántos partidos se perdió por lesión?" | Solo aparecen los jugadores que jugaron: no hay filas de DNP ni motivo. Misma fuente y mismo coste que la anterior. Y ojo: ni siquiera con ella se distingue lesión de descanso programado o sanción. |
+| "¿Fue un tiro abierto o contestado?" | El play-by-play da dónde se tiró, no quién estaba cerca. Requiere tracking. |
+| "¿Por qué eligió ese tiro?" | Ninguna fuente lo tiene. |
 | "¿Qué puesto ocupa en FG% de la liga?" | Se responde, pero con un umbral distinto al oficial: la NBA cualifica los porcentajes por mínimo de intentos (300 tiros anotados) y aquí se usa el de partidos. Los puestos de puntos, rebotes y asistencias sí coinciden exactamente con las fuentes públicas. |
 
 Y un caso aparte, que no es de falta de datos sino de falta de señal:
@@ -112,7 +162,7 @@ Y un caso aparte, que no es de falta de datos sino de falta de señal:
 |---|---|
 | Sedes neutrales de **2022-23** | La API expone `isNeutral` y `gameLabel` desde 2023-24, pero no los retropobló. Se comprobaron `MATCHUP`, `isNeutral`, `gameLabel`, `gameSubtype` y `BoxScoreSummaryV2` sin encontrar ninguna marca. Quedan 2 partidos (de 6.150) clasificados como local cuando se jugaron en París y Ciudad de México. Impacto: 0,03%. |
 
-**Todo esto es ampliable, con coste conocido** — ver §5.
+**Todo esto es ampliable, con coste conocido** — ver §7.
 
 ---
 
@@ -233,6 +283,10 @@ elegir cuál se está haciendo.
 | Media móvil de 25 partidos de su TS% | ✅ Directo |
 | ¿Está en declive respecto a su curva de edad? | ✅ Directo |
 | Puntos per-36 en local vs. visitante | ✅ Directo |
+| ¿Cuántos puntos anota en el cuarto cuarto? | ✅ Directo — n≈70/temporada, ~350 en cinco |
+| Minutos por cuarto | ✅ Directo (léelos junto a los puntos) |
+| Puntos per-36 en el cuarto cuarto | ❌ Rechazado — no hay tasas por cuarto, y no es un hueco |
+| Marcador por cuartos de un partido | ✅ Directo |
 | Rebotes en sábado, 5 temporadas | ⚠️ Tipo B — se responde con `n`, IC y aviso |
 | Puntos contra los Lakers, 5 temporadas | ⚠️ Tipo B — n≈15, plantilla rival distinta |
 | Puntos en sábado contra los Lakers | ⚠️ Tipo B — n≈2, insuficiente |
@@ -246,9 +300,8 @@ elegir cuál se está haciendo.
 
 | Ampliación | Qué desbloquea | Coste |
 |---|---|---|
-| **Box scores por partido** (`BoxScoreTraditionalV3`) | `started`, `dnp_reason`, desglose por cuarto | ~6.600 peticiones, ~1,3 h |
-| **Play-by-play** (`PlayByPlayV3`) | Clutch, rachas, quintetos, on/off, quién asiste a quién | ~6.600 peticiones + ~3M filas |
-| **Shot charts** (`ShotChartDetail`) | Zonas de tiro, mapas de calor | ~3.000 peticiones (jugador × temporada), ~40 min |
+| **Titularidad y DNP** (`BoxScoreTraditionalV3`) | `started`, `dnp_reason`, split titular/banquillo | ~6.600 peticiones, ~1,3 h. **Ojo**: devuelve también a los que no jugaron, y eso rompe la definición de `games_played` en `mv_player_season` — hay que corregirla en la misma migración |
+| ~~**Shot charts** (`ShotChartDetail`)~~ | ~~Zonas de tiro~~ | **Nunca hará falta**: las coordenadas venían dentro del play-by-play, ya cargado. Se ahorró una pasada entera de ~3.000 peticiones |
 | **Tracking** (`BoxScorePlayerTrackV3`) | Distancia recorrida, velocidad, emparejamientos defensivos | ~6.600 peticiones; solo desde 2013-14 |
 
 Ninguna amplía el bloque B.

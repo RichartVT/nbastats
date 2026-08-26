@@ -546,6 +546,181 @@ avisa de evitar. Queda anotado como desviación deliberada.
 
 ---
 
+## Fase 10 — Por debajo del partido: cuartos y contexto
+
+Primera vez que el proyecto guarda algo con granularidad **inferior al partido**.
+Cierra la primera entrada del bloque A de `CAPABILITIES.md`: "¿cómo rinde en el
+cuarto cuarto?".
+
+### El hallazgo que abarató la fase 350 veces
+
+El plan estimaba ~6.600 peticiones y 1,3 h para el desglose por cuarto, porque
+el camino evidente era `BoxScoreTraditionalV3`, que acepta
+`start_period`/`end_period` y cuesta **una petición por partido y por periodo**
+— 26.400 en realidad, 7-11 horas.
+
+Pero `PlayerGameLogs` acepta `Period`, y devuelve la **temporada entera**
+restringida a un periodo en una sola llamada. Las cinco temporadas: **93
+peticiones y cinco minutos.**
+
+No se dio por bueno sin comprobarlo, porque la API de la NBA ignora parámetros
+en silencio con cierta frecuencia y una respuesta ignorada habría devuelto
+cuatro veces el total del partido sin avisar. La comprobación: sumar los
+periodos 1-4 de 2024-25 y contrastar contra el total. Cuadró en 25.930 de
+26.304 jugador-partido (98,6%), y los 374 restantes resultaron ser exactamente
+los partidos con prórroga, a los que les faltaban los periodos 5 y 6.
+Verificado uno a uno.
+
+**La lección, que es general:** antes de pagar una pasada por partido, mirar si
+el endpoint masivo admite el filtro. Lo mismo vale para `MeasureType`, que
+admite `Scoring`, `Misc` y `Usage` — tres familias avanzadas a ~15 peticiones
+cada una en vez de 6.600.
+
+### Cuadre: 140.932 de 140.932, cero descuadres
+
+El criterio de aceptación no fue opcional: `verificar_cuadre()` corre al
+terminar cada carga y compara la suma de los periodos contra
+`player_game_stats`, que ya estaba validado contra NBA.com. Puntos, rebotes,
+asistencias, tiros intentados, pérdidas y minutos (±2 s por el redondeo de la
+fuente). **Cero descuadres en las seis comprobaciones.**
+
+Si los cuartos no suman el partido, o falta un periodo o la API ignoró el
+parámetro — y en los dos casos el dato no vale.
+
+### El cuarto es una dimensión, no una pantalla
+
+Se añadió `Dimension.PERIOD` al catálogo en vez de construir un endpoint nuevo.
+Así hereda gratis el encogimiento bayesiano, Benjamini-Hochberg, el semáforo de
+fiabilidad, el gráfico de puntos con bigotes y el menú del frontend. La única
+concesión: `get_split_groups` se desvía a otra tabla cuando la dimensión es el
+cuarto, porque en `mv_player_game_rates` una fila **es** un partido entero y un
+partido no tiene "cuarto".
+
+El resultado en Jokić enseña por qué merecía la pena montarlo sobre el motor que
+ya existía:
+
+| | n | media | IC 95% | fiabilidad |
+|---|---|---|---|---|
+| 1er cuarto | 357 | 8,12 | 7,67 – 8,56 | alta |
+| 2º cuarto | 357 | 5,55 | 5,20 – 5,90 | alta |
+| 3º cuarto | 352 | 8,13 | 7,70 – 8,56 | alta |
+| 4º cuarto | **295** | 6,02 | 5,60 – 6,44 | alta |
+| 1ª prórroga | 22 | 6,09 | 4,03 – 7,51 | media |
+| 2ª prórroga | 2 | 6,16 | −22,4 – 28,4 | baja |
+
+**n=295 en el cuarto cuarto frente a 357 en el primero**: no juega todos los
+últimos cuartos. Los minutos lo confirman (10,6 / 7,0 / 10,9 / 7,2), y la
+diferencia de puntos es sobre todo una historia de minutos. Por eso los minutos
+son una estadística seleccionable de la dimensión y el aviso lo dice. La 2ª
+prórroga, con n=2, sale sola marcada como no fiable.
+
+### Sin tasas por cuarto, a propósito
+
+`player_period_stats` guarda totales y segundos, nada más. Extrapolar a 36
+minutos desde los 4 que alguien jugó en un tercer cuarto produce los mismos
+disparates que el `pace` de jugador que motivó ampliar el alias `Rate`. Pedir
+`pts_per_36` con dimensión "cuarto" devuelve un 422 que enumera las válidas, y
+el menú del frontend filtra las tasas al cambiar de dimensión — cayendo a puntos
+si había una seleccionada, en vez de dejar la pantalla en error.
+
+### Contexto de partido: cuatro huecos con una petición
+
+`BoxScoreSummaryV3` (V3 y no V2: la V2 avisa en su propio constructor de que
+faltan datos desde 2025-04-10, lo que cubre el final de 2024-25 y toda 2025-26)
+trae en una sola llamada el marcador por cuarto, la asistencia, el pabellón, los
+árbitros y los periodos de prórroga. 6.602 peticiones, 1,3 h.
+
+Rellena `games.attendance` y `games.arena_name`, que existían desde el esquema
+inicial y valían NULL siempre. Cuadre: **13.198 de 13.198 equipos**, la suma de
+sus cuartos es exactamente `team_game_stats.pts`.
+
+**Sobre las prórrogas, una nota honesta.** `ot_periods` se venía infiriendo con
+`round((MIN − 48) / 5)`. Se guardó el valor inferido antes de sobrescribirlo
+para poder comparar: **coincidió en los 6.579 partidos, sin una sola
+diferencia.** La heurística no estaba mal. Lo que cambia es que ahora el dato se
+lee en vez de deducirse, que es la política del proyecto desde el bug de
+"Quarterfinal" — pero conviene no vender como arreglo lo que fue una
+confirmación.
+
+### Tres partidos sin resumen en la fuente
+
+`0022500259`, `0022500260` y `0022500261` (19-11-2025) devuelven el resumen con
+todos los campos a `null`; el parser de `nba_api` revienta al leerlos. No es un
+fallo de red ni nuestro: la NBA no tiene esos datos. Son 3 de 6.602 (0,045%).
+
+Se documenta el hueco en lugar de rellenarlo, igual que con los 2 partidos en
+sede neutral de 2022-23. El marcador por cuartos de esos tres partidos no
+existe, y la ficha lo dice explícitamente en vez de pintar una tabla de ceros.
+
+**Esto destapó un fallo real del cliente**: `_call` reintentaba ante *cualquier*
+excepción, incluidos los errores de forma. Cinco intentos con espera creciente
+sobre una respuesta que nunca va a cambiar son 30 segundos tirados por partido.
+Ahora `AttributeError`, `KeyError`, `TypeError` e `IndexError` no se reintentan:
+esos delatan que la respuesta tiene otra forma, y eso no se arregla insistiendo.
+Los tres partidos pasaron de tardar 90 segundos a 2,5.
+
+### Otro arreglo del cliente
+
+`_extract_rows()` solo entiende el formato `resultSets` clásico. Los endpoints
+V3 devuelven un JSON anidado, así que usarlos obligaba a llamar a `_throttle()`
+a pelo y **quedarse sin reintentos** — inaceptable en un bucle de 6.600
+peticiones, donde un corte de red pasajero tira la pasada entera. Se separó
+`_call_raw()` (ritmo + reintentos, sin interpretar) de `_call()` (que además
+extrae las filas).
+
+### Récord con el que se llega al partido
+
+Añadido como columna derivada en `derive.sql`, junto a `rest_days`, porque
+depende de todos los partidos anteriores del equipo: calcularlo en la ingesta
+daría resultados distintos según el orden de carga.
+
+`COUNT(*) FILTER (WHERE won) OVER (... ROWS BETWEEN UNBOUNDED PRECEDING AND
+1 PRECEDING)`. El `1 PRECEDING` es lo que impide que el partido se cuente a sí
+mismo — sin él, todo equipo llegaría a su debut con un 1-0. La partición incluye
+`season_type`: arrastrar el récord regular a un séptimo partido de final daría
+un "58-24" que no es con lo que se llega a ese partido.
+
+Validación: el récord tras el último partido de cada equipo coincide con
+`team_standings` en los **30 de 30** equipos de 2024-25.
+
+Es el dato que convierte un resultado en una historia. "Ganó por 20" dice poco;
+"el 9-11 ganó por 20 al 13-7" lo dice todo.
+
+### Lo que se pintó en la aplicación
+
+- **Marcador por cuartos** en la ficha de partido, con las prórrogas etiquetadas
+  P1/P2 y el ganador de cada cuarto resaltado.
+- **Récord al llegar**, bajo el nombre de cada equipo.
+- **Vista "Por cuartos"** en el box score, con los puntos de cada jugador en
+  cada periodo. Un periodo que el jugador no jugó se pinta como `·` y no como
+  `0`: son cosas distintas y el `0` sería mentira.
+- **Árbitros con nombre**, pabellón y asistencia en la cabecera.
+- **"Cuarto" como dimensión de splits** en la ficha de jugador, con su semáforo.
+
+Detalle que resultó importante: los periodos de la vista por cuartos se calculan
+desde el box **por jugador**, no desde el marcador de equipo. Son dos cargas
+independientes, y gracias a eso los 3 partidos sin resumen conservan su
+desglose por cuarto.
+
+### Lo que se aprendió para las fases siguientes
+
+- **El play-by-play trae las coordenadas de tiro** (`xLegacy`, `yLegacy`,
+  `shotDistance`): los 183 tiros de campo de un partido de muestra las traían,
+  los 183. `ShotChartDetail` sobra, y con él una pasada entera de ~3.000
+  peticiones que `CAPABILITIES.md` §5 daba por necesaria.
+- **Volumen real del play-by-play: 525 eventos por partido**, no ~450. Son
+  ~3,5 M filas para las cinco temporadas.
+- **Trampa esperando en la fase de titularidad**: `BoxScoreTraditionalV3`
+  devuelve también a los jugadores que no jugaron. Cargarlos añade ~53.000 filas
+  a `player_game_stats` y rompe en silencio la definición de `games_played` de
+  `mv_player_season`, que es `COUNT(*)` precisamente porque hoy la fuente solo
+  trae a los que aparecieron. Los promedios de todos los jugadores de rotación
+  corta se hundirían. La corrección
+  (`COUNT(*) FILTER (WHERE dnp_reason IS NULL)`) tiene que ir en la misma
+  migración, con contraste antes/después contra NBA.com.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:

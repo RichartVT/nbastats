@@ -2,12 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import { Fragment, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { TeamBoxScore } from '../api/types'
+import type { GameDetail, TeamBoxScore } from '../api/types'
 import { Card, ErrorBox, Loading } from '../components/Layout'
 import { GameTypeBadge, PlayerPhoto, TeamLogo } from '../components/Media'
 import { fmt, fmtDate, fmtPct, fmtSigned } from '../lib/format'
 
-type Vista = 'basicas' | 'avanzadas'
+type Vista = 'basicas' | 'avanzadas' | 'cuartos'
 
 function pct(m: number | null, a: number | null): string {
   if (!a) return '—'
@@ -68,7 +68,91 @@ function Comparativa({
   )
 }
 
-function BoxScore({ equipo, vista }: { equipo: TeamBoxScore; vista: Vista }) {
+/**
+ * Marcador por cuartos.
+ *
+ * No se pinta si `periods` viene vacío: eso significa que el resumen del
+ * partido todavía no se ha descargado (`nbastats ingest-summaries`), no que el
+ * partido no tuviera cuartos. Una tabla de ceros sería un dato inventado.
+ *
+ * Las columnas de prórroga se etiquetan P1, P2… en vez de 5, 6: es como se lee
+ * un marcador, y además el número de periodo ya no significa nada para quien
+ * mira ("¿el 6?" no dice que fue la segunda prórroga).
+ */
+function MarcadorPorCuartos({ data }: { data: GameDetail }) {
+  if (data.periods.length === 0) return null
+
+  const periodos = [...new Set(data.periods.map((p) => p.period))].sort((a, b) => a - b)
+  const esProrroga = (n: number) =>
+    data.periods.find((p) => p.period === n)?.is_overtime ?? false
+
+  const puntos = (teamId: number, periodo: number) =>
+    data.periods.find((p) => p.team_id === teamId && p.period === periodo)?.points
+
+  const filas = [data.away, data.home]
+  let prorroga = 0
+  const etiquetas = periodos.map((n) => (esProrroga(n) ? `P${++prorroga}` : String(n)))
+
+  return (
+    <div className="mt-4 overflow-x-auto" style={{ borderTop: '1px solid var(--border)' }}>
+      <table className="mt-3 text-sm">
+        <thead>
+          <tr style={{ color: 'var(--text-muted)' }}>
+            <th className="w-16 py-1 pr-3 text-left font-medium" />
+            {periodos.map((n, i) => (
+              <th
+                key={n}
+                className="w-11 py-1 text-right font-medium"
+                title={esProrroga(n) ? `Prórroga ${etiquetas[i].slice(1)}` : `Cuarto ${n}`}
+              >
+                {etiquetas[i]}
+              </th>
+            ))}
+            <th className="w-14 py-1 pr-1 text-right font-medium">T</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((t) => (
+            <tr key={t.team_id} style={{ borderTop: '1px solid var(--border)' }}>
+              <td className="py-1.5 pr-3 font-medium">{t.abbreviation}</td>
+              {periodos.map((n) => {
+                // El máximo del periodo se resalta: es lo que convierte la
+                // tabla en una lectura del partido y no en doce cifras.
+                const mio = puntos(t.team_id, n)
+                const rival = filas.find((o) => o.team_id !== t.team_id)
+                const suyo = rival ? puntos(rival.team_id, n) : undefined
+                const gana = mio !== undefined && suyo !== undefined && mio > suyo
+                return (
+                  <td
+                    key={n}
+                    className="tabular py-1.5 text-right"
+                    style={{
+                      color: gana ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      fontWeight: gana ? 600 : 400,
+                    }}
+                  >
+                    {mio ?? '—'}
+                  </td>
+                )
+              })}
+              <td className="tabular py-1.5 pr-1 text-right font-semibold">{t.pts}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function BoxScore({
+  equipo,
+  vista,
+  periodos,
+}: {
+  equipo: TeamBoxScore
+  vista: Vista
+  periodos: { numero: number; etiqueta: string }[]
+}) {
   const titulares = equipo.players.filter((p) => p.started)
   const suplentes = equipo.players.filter((p) => !p.started)
   // `started` está vacío en esta fuente (ver CAPABILITIES.md §2), así que si no
@@ -83,7 +167,9 @@ function BoxScore({ equipo, vista }: { equipo: TeamBoxScore; vista: Vista }) {
   const cabeceras =
     vista === 'basicas'
       ? ['Min', 'PTS', 'TC', '3P', 'TL', 'REB', 'AST', 'ROB', 'TAP', 'PER', 'FP', '+/-']
-      : ['Min', 'TS%', 'eFG%', 'USG%', 'AST%', 'REB%', 'Of', 'Def', 'Net', 'PIE', 'GmSc']
+      : vista === 'cuartos'
+        ? ['Min', ...periodos.map((x) => x.etiqueta), 'PTS']
+        : ['Min', 'TS%', 'eFG%', 'USG%', 'AST%', 'REB%', 'Of', 'Def', 'Net', 'PIE', 'GmSc']
 
   return (
     <div className="overflow-x-auto">
@@ -91,8 +177,21 @@ function BoxScore({ equipo, vista }: { equipo: TeamBoxScore; vista: Vista }) {
         <thead>
           <tr className="text-left" style={{ color: 'var(--text-secondary)' }}>
             <th className="py-2 pr-3 font-medium">Jugador</th>
-            {cabeceras.map((h) => (
-              <th key={h} className="py-2 pr-3 text-right font-medium">
+            {cabeceras.map((h, i) => (
+              <th
+                key={h}
+                // Las columnas de una tabla se ajustan a su contenido, así que
+                // un cuarto con "11" ensanchaba SOLO esa columna y descuadraba
+                // la rejilla — dentro de la tabla y entre los dos equipos. Con
+                // ancho fijo, un cuarto de 2 puntos y otro de 12 ocupan lo
+                // mismo y las cifras caen siempre en la misma vertical.
+                //
+                // Solo las de cuarto: "Min" lleva "41:54" y no cabe en el mismo
+                // ancho, y forzárselo la rompería en dos líneas.
+                className={`py-2 pr-3 text-right font-medium ${
+                  vista === 'cuartos' && i > 0 && i <= periodos.length ? 'w-14' : ''
+                }`}
+              >
                 {h}
               </th>
             ))}
@@ -162,6 +261,47 @@ function BoxScore({ equipo, vista }: { equipo: TeamBoxScore; vista: Vista }) {
                         {p.plus_minus === null ? '—' : fmtSigned(p.plus_minus, 0)}
                       </td>
                     </>
+                  ) : vista === 'cuartos' ? (
+                    <>
+                      <td className="tabular py-2 pr-3 text-right">{p.minutes}</td>
+                      {periodos.map(({ numero }) => {
+                        // Sin entrada = no jugó ese cuarto, que NO es lo mismo
+                        // que anotar cero. Un 0 ahí diría que estuvo en pista
+                        // sin anotar, y sería mentira.
+                        const pts = p.points_by_period[String(numero)]
+                        const jugo = pts !== undefined
+                        return (
+                          <td
+                            key={numero}
+                            className="tabular w-14 py-2 pr-3 text-right"
+                            style={{
+                              // El énfasis del cuarto de dos dígitos va por
+                              // COLOR y no por grosor: la negrita tiene otras
+                              // métricas que la redonda, así que `tabular-nums`
+                              // deja de igualar los anchos en cuanto se mezclan
+                              // y las cifras dejan de alinearse entre sí.
+                              color: !jugo
+                                ? 'var(--text-muted)'
+                                : pts >= 10
+                                  ? 'var(--series-4)'
+                                  : pts === 0
+                                    ? 'var(--text-secondary)'
+                                    : 'var(--text-primary)',
+                            }}
+                            title={
+                              jugo
+                                ? pts >= 10
+                                  ? `${pts} puntos en un solo cuarto`
+                                  : undefined
+                                : 'No jugó este periodo'
+                            }
+                          >
+                            {jugo ? pts : '·'}
+                          </td>
+                        )
+                      })}
+                      <td className="tabular py-2 pr-3 text-right font-medium">{p.pts}</td>
+                    </>
                   ) : (
                     <>
                       <td className="tabular py-2 pr-3 text-right">{p.minutes}</td>
@@ -185,6 +325,18 @@ function BoxScore({ equipo, vista }: { equipo: TeamBoxScore; vista: Vista }) {
           ))}
         </tbody>
       </table>
+
+      {/* La distinción entre `·` y `0` es la información, no un adorno: sin
+          leyenda, un `·` parece un dato que falta cuando lo que dice es que el
+          jugador no pisó la pista ese cuarto. */}
+      {vista === 'cuartos' && (
+        <p className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+          <strong>0</strong> = jugó ese cuarto y no anotó. <strong>·</strong> = no jugó
+          ese cuarto. En <span style={{ color: 'var(--series-4)' }}>ámbar</span>, los
+          cuartos de diez puntos o más. Los minutos de la primera columna son los del
+          partido entero.
+        </p>
+      )}
     </div>
   )
 }
@@ -204,6 +356,25 @@ export function GamePage() {
 
   const { home: local, away: visitante } = data
 
+  // Los periodos que se jugaron, con la etiqueta con la que se leen. Se sacan
+  // del box por jugador y no del marcador de equipo porque son dos cargas
+  // independientes: hay 3 partidos sin resumen de equipo cuyo desglose por
+  // jugador sí existe, y al revés no ocurre.
+  const numerosPeriodo = [
+    ...new Set(
+      data.home.players
+        .concat(data.away.players)
+        .flatMap((p) => Object.keys(p.points_by_period).map(Number)),
+    ),
+  ].sort((a, b) => a - b)
+
+  let prorroga = 0
+  const periodos = numerosPeriodo.map((numero) => ({
+    numero,
+    etiqueta: numero <= 4 ? String(numero) : `P${++prorroga}`,
+  }))
+  const hayCuartos = periodos.length > 0
+
   const Marcador = ({ t, ganador }: { t: TeamBoxScore; ganador: boolean }) => (
     <Link
       to={`/equipo/${t.team_id}`}
@@ -214,6 +385,15 @@ export function GamePage() {
       <div className="min-w-0">
         <div className="truncate font-medium">{t.full_name}</div>
         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          {/* El récord con el que LLEGABA, sin contar este partido. Es lo que
+              convierte un resultado en una historia: "ganó por 20" dice poco;
+              "el 9-11 ganó por 20 al 13-7" lo dice todo. */}
+          {t.wins_before !== null && t.losses_before !== null && (
+            <span title="Récord antes de este partido">
+              {t.wins_before}-{t.losses_before}
+              {' · '}
+            </span>
+          )}
           {t.is_home ? 'Local' : 'Visitante'}
           {t.is_back_to_back && ' · 2º en 2 días'}
           {t.rest_days !== null &&
@@ -247,7 +427,11 @@ export function GamePage() {
             <span>{data.ot_periods === 1 ? 'Prórroga' : `${data.ot_periods} prórrogas`}</span>
           )}
           {data.is_neutral_site && <span>Sede neutral</span>}
+          {data.arena_name && <span>{data.arena_name}</span>}
           {data.attendance && <span>{data.attendance.toLocaleString('es-ES')} espectadores</span>}
+          {data.officials.length > 0 && (
+            <span>Árbitros: {data.officials.map((o) => o.name).join(', ')}</span>
+          )}
         </div>
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -257,6 +441,8 @@ export function GamePage() {
           </span>
           <Marcador t={local} ganador={Boolean(local.won)} />
         </div>
+
+        <MarcadorPorCuartos data={data} />
       </section>
 
       {/* --- Comparativa de equipo --- */}
@@ -361,20 +547,25 @@ export function GamePage() {
       <div className="flex items-center gap-3">
         <h2 className="text-sm font-semibold">Box score</h2>
         <div className="flex gap-1">
-          {(['basicas', 'avanzadas'] as const).map((v) => (
-            <button
-              key={v}
-              onClick={() => setVista(v)}
-              className="rounded-md px-2.5 py-1.5 text-xs"
-              style={{
-                background: vista === v ? 'var(--series-1)' : 'var(--surface-1)',
-                color: vista === v ? '#fff' : 'var(--text-secondary)',
-                border: '1px solid var(--border)',
-              }}
-            >
-              {v === 'basicas' ? 'Básicas' : 'Avanzadas'}
-            </button>
-          ))}
+          {/* "Por cuartos" solo aparece si hay datos por cuarto de este
+              partido: un botón que lleva a una tabla vacía es peor que no
+              tenerlo. */}
+          {(['basicas', 'avanzadas', ...(hayCuartos ? (['cuartos'] as const) : [])] as const).map(
+            (v) => (
+              <button
+                key={v}
+                onClick={() => setVista(v)}
+                className="rounded-md px-2.5 py-1.5 text-xs"
+                style={{
+                  background: vista === v ? 'var(--series-1)' : 'var(--surface-1)',
+                  color: vista === v ? '#fff' : 'var(--text-secondary)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                {v === 'basicas' ? 'Básicas' : v === 'avanzadas' ? 'Avanzadas' : 'Por cuartos'}
+              </button>
+            ),
+          )}
         </div>
       </div>
 
@@ -386,15 +577,23 @@ export function GamePage() {
             t.players.length
           } jugadores`}
         >
-          <BoxScore equipo={t} vista={vista} />
+          <BoxScore equipo={t} vista={vista} periodos={periodos} />
         </Card>
       ))}
 
       <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-        Esto es <strong>todo</strong> lo que hay de este partido en la base. No existe
-        desglose por cuarto, ni secuencia de anotación, ni datos de tiro por zona:
-        eso requeriría cargar el play-by-play, que está documentado en
-        CAPABILITIES.md §2 con su coste.
+        {data.periods.length === 0 && (
+          <>
+            La NBA no publica el resumen de este partido, así que falta el marcador por
+            cuartos de equipo, la asistencia y los árbitros. Es un hueco de la fuente, no
+            de la carga: son 3 partidos de 6.602. El desglose por cuarto de cada jugador
+            sí está, porque viene de otro sitio.{' '}
+          </>
+        )}
+        El desglose por cuarto llega hasta aquí: hay puntos por cuarto de cada jugador —y
+        rebotes, asistencias y minutos en la ficha del jugador—, pero <strong>no</strong>{' '}
+        la secuencia de anotación, ni las rachas, ni los datos de tiro por zona. Eso
+        requeriría cargar el play-by-play, documentado en CAPABILITIES.md §5 con su coste.
       </p>
     </div>
   )

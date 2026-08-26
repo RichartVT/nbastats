@@ -355,6 +355,9 @@ export interface PlayerBoxScore {
   net_rating: number | null
   pie: number | null
   game_score: number | null
+  /** Puntos por periodo, con la clave como texto: {"1": 8, "4": 11}. Un periodo
+   *  AUSENTE significa que no jugó ese cuarto, no que anotara cero. */
+  points_by_period: Record<string, number>
 }
 
 export interface TeamBoxScore {
@@ -388,7 +391,24 @@ export interface TeamBoxScore {
   efg_pct: number | null
   rest_days: number | null
   is_back_to_back: boolean | null
+  /** Récord con el que el equipo LLEGABA al partido, sin contarlo. */
+  wins_before: number | null
+  losses_before: number | null
   players: PlayerBoxScore[]
+}
+
+export interface PeriodScore {
+  team_id: number
+  period: number
+  points: number
+  /** Lo dice la fuente (`periodType`), no se deduce de `period > 4`. */
+  is_overtime: boolean
+}
+
+export interface Official {
+  official_id: number
+  name: string
+  jersey_number: string | null
 }
 
 export interface GameDetail {
@@ -400,6 +420,11 @@ export interface GameDetail {
   ot_periods: number
   is_neutral_site: boolean
   attendance: number | null
+  arena_name: string | null
+  /** VACÍO significa que el resumen del partido aún no se ha descargado, no
+   *  que no hubiera cuartos. Pintar ceros ahí sería inventarse el dato. */
+  periods: PeriodScore[]
+  officials: Official[]
   home: TeamBoxScore
   away: TeamBoxScore
 }

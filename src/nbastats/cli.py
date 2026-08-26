@@ -6,6 +6,8 @@
     uv run nbastats ingest-bios           # ficha de jugador (nacimiento, dorsal…)
     uv run nbastats ingest-teams          # fichas, plantillas y clasificación
     uv run nbastats enrich                # hora de inicio, sede y tipo de partido
+    uv run nbastats ingest-periods        # box score por cuarto (masivo, ~5 min)
+    uv run nbastats ingest-summaries      # resumen por partido (uno a uno, ~1,3 h)
     uv run nbastats daily                 # actualización diaria
     uv run nbastats refresh               # recalcula derivadas y vistas
 """
@@ -193,6 +195,65 @@ def enrich(
     )
 
 
+@app.command("ingest-periods")
+def ingest_periods_cmd(
+    seasons: str = typer.Option("", help="Coma-separadas. Vacío = las del .env"),
+    verbose: bool = False,
+) -> None:
+    """Box score de jugador por cuarto. ~75 peticiones, ~2 minutos.
+
+    Es masivo, no por partido: `PlayerGameLogs` acepta `Period` y devuelve la
+    temporada entera restringida a un cuarto en una sola llamada. Al terminar
+    comprueba que la suma de los periodos reproduce el total del partido.
+    """
+    _configurar_logging(verbose)
+    from nbastats.ingest.periods import ingest_periods, verificar_cuadre
+
+    lista = [x.strip() for x in seasons.split(",") if x.strip()] or get_settings().season_list
+    r = ingest_periods(lista)
+    console.print(f"[green]{r['filas']:,} filas en {r['peticiones']} peticiones[/green]")
+
+    v = verificar_cuadre(lista)
+    malos = sum(v[k] for k in v if k != "comparados")
+    color = "green" if malos == 0 else "red"
+    console.print(
+        f"[{color}]Cuadre: {v['comparados']:,} jugador-partido comparados, "
+        f"{malos} descuadres[/{color}]"
+    )
+    if malos:
+        console.print(f"[yellow]{ {k: v[k] for k in v if k != 'comparados' and v[k]} }[/yellow]")
+
+
+@app.command("ingest-summaries")
+def ingest_summaries_cmd(
+    seasons: str = typer.Option("", help="Coma-separadas. Vacío = todas las cargadas"),
+    all_games: bool = typer.Option(False, "--all", help="Reprocesar también los ya cargados"),
+    limit: int = typer.Option(0, help="Solo los N primeros pendientes. Para probar"),
+    verbose: bool = False,
+) -> None:
+    """Marcador por cuarto, pabellón, asistencia y árbitros.
+
+    UNA PETICIÓN POR PARTIDO: ~6.600 peticiones y ~1,5 h para la carga completa.
+    Es la primera ingesta del proyecto que no es masiva. Se puede interrumpir y
+    relanzar: retoma por los partidos que falten.
+
+    Pruébalo antes con `--limit 20`.
+    """
+    _configurar_logging(verbose)
+    from nbastats.ingest.summaries import ingest_game_summaries
+
+    lista = [x.strip() for x in seasons.split(",") if x.strip()] or None
+    r = ingest_game_summaries(lista, only_missing=not all_games, limit=limit or None)
+    console.print(
+        f"[green]{r['pedidos'] - r['fallidos']:,} partidos · "
+        f"{r['periodos']:,} filas de marcador por periodo[/green]"
+    )
+    if r["fallidos"]:
+        console.print(
+            f"[yellow]{r['fallidos']} fallidos: vuelve a lanzarlo para reintentar[/yellow]"
+        )
+
+
 @app.command("ingest-teams")
 def ingest_teams_cmd(
     seasons: str = typer.Option("", help="Coma-separadas. Vacío = las del .env"),
@@ -232,15 +293,22 @@ def daily(verbose: bool = False) -> None:
 
     Recarga la temporada ACTUAL entera en lugar de calcular un rango de fechas.
     Puede parecer excesivo, pero `PlayerGameLogs` devuelve la temporada completa
-    en ~1 segundo, así que son 4 peticiones: más simple que cualquier lógica
-    incremental, y recoge gratis las correcciones oficiales de box scores que la
-    NBA publica días después de cada partido.
+    en ~1 segundo, así que la parte masiva son ~25 peticiones: más simple que
+    cualquier lógica incremental, y recoge gratis las correcciones oficiales de
+    box scores que la NBA publica días después de cada partido.
+
+    La parte por partido (los resúmenes) va aparte y **solo pide los que
+    faltan**: unos 8-13 partidos en una noche de competición, no los 6.602. Es
+    lo que mantiene el coste diario en minutos aunque la carga histórica llevara
+    hora y media.
     """
     _configurar_logging(verbose)
     from nbastats.db.maintenance import compute_derived_columns, refresh_views
     from nbastats.ingest.bio import ingest_player_bios
     from nbastats.ingest.bulk import ingest_seasons
     from nbastats.ingest.enrich import enrich_games
+    from nbastats.ingest.periods import ingest_periods, verificar_cuadre
+    from nbastats.ingest.summaries import ingest_game_summaries
     from nbastats.ingest.teams import ingest_all_team_data
 
     season = temporada_actual()
@@ -260,8 +328,27 @@ def daily(verbose: bool = False) -> None:
         f"  {equipos['equipos']} fichas de equipo, {equipos['plantillas']} de plantilla"
     )
 
+    periodos = ingest_periods([season])
+    console.print(f"  {periodos['filas']:,} filas por cuarto")
+
+    # Solo los partidos sin resumen: los de anoche, no los 6.602.
+    resumenes = ingest_game_summaries([season], only_missing=True)
+    console.print(f"  {resumenes['pedidos'] - resumenes['fallidos']:,} resúmenes de partido")
+
     compute_derived_columns()
     refresh_views()
+
+    # El cuadre de los cuartos se comprueba en cada actualización, no solo en la
+    # carga inicial: si un día la API deja de aceptar `Period`, devolvería el
+    # total del partido en los cuatro cuartos y nadie se enteraría.
+    v = verificar_cuadre([season])
+    malos = sum(v[k] for k in v if k != "comparados")
+    if malos:
+        console.print(
+            f"[red]AVISO: {malos} descuadres entre los cuartos y el total "
+            f"del partido en {season}[/red]"
+        )
+
     console.print("[green]Actualización diaria completada.[/green]")
 
 

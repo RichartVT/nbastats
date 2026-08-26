@@ -490,6 +490,64 @@ _DIMENSION_SQL: dict[Dimension, str] = {
 }
 
 
+def _grupos_por_cuarto(
+    session: Session,
+    player_id: int,
+    stat: Stat,
+    seasons: list[str] | None,
+    season_types: tuple[str, ...],
+) -> dict[str, list[float]]:
+    """Valores del jugador agrupados por cuarto, uno por partido y cuarto.
+
+    Cada observación es lo que hizo en ese cuarto de ese partido, que es
+    exactamente la unidad que necesita `analyze_splits`: comparable entre sí
+    (todos los cuartos duran 12 minutos) y con muestra de sobra — un titular
+    acumula ~70 cuartos cuartos por temporada y ~350 en cinco.
+
+    Solo hay fila cuando el jugador pisó la pista en ese cuarto. Rellenar con
+    ceros los cuartos que no jugó hundiría la media de un suplente y diría que
+    "anota poco en el primer cuarto" cuando lo que pasa es que no juega.
+    """
+    col = STATS[stat].column
+    extra = " AND g.season_id = ANY(:seasons)" if seasons else ""
+    params = {"seasons": seasons} if seasons else {}
+
+    sql = text(f"""
+        SELECT p.period AS nivel, p.{col} AS valor
+        FROM player_period_stats p
+        JOIN games g USING (game_id)
+        WHERE p.player_id = :pid
+          AND g.season_type::text = ANY(:types)
+          AND p.{col} IS NOT NULL{extra}
+    """)
+    filas = session.execute(
+        sql, {"pid": player_id, "types": list(season_types), **params}
+    ).all()
+
+    grupos: dict[str, list[float]] = defaultdict(list)
+    for f in filas:
+        grupos[_etiqueta_cuarto(int(f.nivel))].append(float(f.valor))
+
+    # Orden natural del partido, no alfabético.
+    return dict(sorted(grupos.items(), key=lambda kv: _orden_cuarto(kv[0])))
+
+
+def _etiqueta_cuarto(period: int) -> str:
+    """1 -> '1er cuarto'; 5 -> '1ª prórroga'.
+
+    Las prórrogas se numeran desde 1 y no se llaman "periodo 5": nadie lee un
+    partido así, y el número de periodo deja de significar nada para quien mira.
+    """
+    if period <= 4:
+        return f"{period}{'er' if period == 1 else 'º'} cuarto"
+    return f"{period - 4}ª prórroga"
+
+
+def _orden_cuarto(etiqueta: str) -> int:
+    n = int(etiqueta.split(maxsplit=1)[0].rstrip("erºª"))
+    return n if "cuarto" in etiqueta else 4 + n
+
+
 def get_split_groups(
     session: Session,
     player_id: int,
@@ -499,6 +557,13 @@ def get_split_groups(
     season_types: tuple[str, ...] = _TIPOS_DEFECTO,
 ) -> dict[str, list[float]]:
     """Agrupa los valores de un jugador por los niveles de una dimensión."""
+    # El cuarto tiene otra granularidad —jugador × partido × periodo— y por
+    # tanto otra tabla, así que se desvía ANTES de resolver nada: en
+    # `mv_player_game_rates` una fila ES un partido entero, y un partido no
+    # tiene "cuarto", de modo que no hay expresión de dimensión que buscar.
+    if dimension is Dimension.PERIOD:
+        return _grupos_por_cuarto(session, player_id, stat, seasons, season_types)
+
     col = STATS[stat].column
     expr = _DIMENSION_SQL[dimension]
     extra, params = _filtro_temporadas(seasons)
@@ -722,11 +787,36 @@ def get_game(session: Session, game_id: str) -> dict | None:
                g.season_type::text AS season_type,
                g.game_label, g.game_sublabel,
                g.tipoff_utc, g.ot_periods, g.is_neutral_site, g.attendance,
+               g.arena_name,
                g.home_team_id, g.away_team_id, g.home_pts, g.away_pts
         FROM games g WHERE g.game_id = :gid
     """)
     fila = session.execute(sql, {"gid": game_id}).mappings().first()
     return dict(fila) if fila else None
+
+
+def get_game_periods(session: Session, game_id: str) -> list[dict]:
+    """Marcador por periodo de los dos equipos.
+
+    Devuelve lista vacía si el partido todavía no tiene el resumen cargado.
+    Vacío significa "no lo hemos descargado", no "no hubo cuartos": el
+    frontend tiene que poder distinguirlo para no enseñar un marcador a cero.
+    """
+    sql = text("""
+        SELECT team_id, period, points, is_overtime
+        FROM game_period_scores
+        WHERE game_id = :gid
+        ORDER BY period, team_id
+    """)
+    return [dict(f) for f in session.execute(sql, {"gid": game_id}).mappings()]
+
+
+def get_game_officials(session: Session, game_id: str) -> list[dict]:
+    sql = text("""
+        SELECT official_id, name, jersey_number
+        FROM game_officials WHERE game_id = :gid ORDER BY name
+    """)
+    return [dict(f) for f in session.execute(sql, {"gid": game_id}).mappings()]
 
 
 def get_game_team_stats(session: Session, game_id: str) -> list[dict]:
@@ -740,13 +830,37 @@ def get_game_team_stats(session: Session, game_id: str) -> list[dict]:
                tgs.possessions, tgs.pace,
                tgs.off_rating, tgs.def_rating, tgs.net_rating,
                tgs.ts_pct, tgs.efg_pct,
-               tgs.rest_days, tgs.is_back_to_back
+               tgs.rest_days, tgs.is_back_to_back,
+               tgs.wins_before, tgs.losses_before
         FROM team_game_stats tgs
         JOIN teams t ON t.team_id = tgs.team_id
         WHERE tgs.game_id = :gid
         ORDER BY tgs.is_home DESC
     """)
     return [dict(f) for f in session.execute(sql, {"gid": game_id}).mappings()]
+
+
+def get_game_player_periods(session: Session, game_id: str) -> dict[int, dict[int, int]]:
+    """Puntos de cada jugador en cada periodo de un partido.
+
+    Devuelve `{player_id: {period: puntos}}`. Se entrega aparte del box score y
+    no como columnas fijas porque el número de periodos varía: fijar cuatro
+    columnas obligaría a inventar un apaño el día de una prórroga, que es el
+    6,5% de los partidos.
+
+    Un jugador sin fila en un periodo no jugó ese periodo, y eso NO es lo mismo
+    que anotar cero. La interfaz debe distinguirlo.
+    """
+    sql = text("""
+        SELECT player_id, period, pts
+        FROM player_period_stats
+        WHERE game_id = :gid AND pts IS NOT NULL
+        ORDER BY player_id, period
+    """)
+    por_jugador: dict[int, dict[int, int]] = defaultdict(dict)
+    for f in session.execute(sql, {"gid": game_id}).mappings():
+        por_jugador[f["player_id"]][f["period"]] = f["pts"]
+    return dict(por_jugador)
 
 
 def get_game_player_stats(session: Session, game_id: str) -> list[dict]:

@@ -279,6 +279,141 @@ class TeamGameStats(Base):
     rest_days: Mapped[int | None] = mapped_column(SmallInteger)
     is_back_to_back: Mapped[bool | None] = mapped_column(Boolean)
 
+    # Récord con el que el equipo LLEGABA a este partido, sin contarlo.
+    #
+    # Es lo que convierte un resultado en una historia: "ganó por 20" dice poco;
+    # "el 12-38 ganó por 20 al 40-10" lo dice todo. Se deriva en vez de
+    # guardarse en la ingesta porque depende de todos los partidos anteriores,
+    # que pueden llegar después o corregidos.
+    #
+    # Se cuenta dentro del mismo `season_type`: para un partido de temporada
+    # regular es el récord de la temporada, y para uno de playoffs es su
+    # recorrido en esos playoffs. Mezclarlos daría un "58-24" en un séptimo
+    # partido de final, que no es el récord con el que se llega a ese partido.
+    wins_before: Mapped[int | None] = mapped_column(SmallInteger)
+    losses_before: Mapped[int | None] = mapped_column(SmallInteger)
+
+
+class GamePeriodScore(Base):
+    """Marcador de un equipo en un periodo. Una fila por partido, equipo y periodo.
+
+    Es la primera tabla del proyecto con granularidad INFERIOR al partido, y por
+    eso vale la pena decir qué NO es: no son las estadísticas del equipo en ese
+    cuarto, solo sus puntos. El desglose completo por periodo del box score
+    exigiría una petición por periodo (4-6 por partido) o derivarlo del
+    play-by-play; los puntos vienen gratis en el resumen del partido.
+
+    `period` va del 1 al 4 en un partido normal y sigue subiendo en las
+    prórrogas: la 1ª prórroga es el periodo 5. Se guarda `is_overtime` en vez de
+    deducirlo con `period > 4` porque es la fuente quien lo dice (`periodType`),
+    y una regla nuestra dejaría de valer el día que la NBA cambie el formato.
+    """
+
+    __tablename__ = "game_period_scores"
+    __table_args__ = (
+        Index("ix_gps_game", "game_id"),
+        CheckConstraint("period >= 1", name="ck_gps_period_positivo"),
+        CheckConstraint("points >= 0", name="ck_gps_points_nonneg"),
+    )
+
+    game_id: Mapped[str] = mapped_column(
+        String(20), ForeignKey("games.game_id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("teams.team_id"), primary_key=True
+    )
+    period: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+
+    points: Mapped[int] = mapped_column(Count)
+    is_overtime: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+
+
+class PlayerPeriodStats(Base):
+    """Box score de un jugador en un periodo. Una fila por jugador, partido y periodo.
+
+    Responde a la pregunta que `CAPABILITIES.md` §2 declaraba imposible: "¿cómo
+    rinde en el cuarto cuarto?". Y es, de todo lo que hay por debajo del
+    partido, **el dato con mejor muestra**: un titular juega ~70 cuartos cuartos
+    por temporada y ~350 en cinco, muy por encima del umbral de fiabilidad alta.
+
+    Se pide con `PlayerGameLogs(period_nullable=N)`, que devuelve la temporada
+    entera por periodo en una petición. Derivarlo del play-by-play habría dado
+    lo mismo con mucho más trabajo y más formas de equivocarse; pedir el dato a
+    la fuente es siempre preferible a reconstruirlo.
+
+    Solo hay fila cuando el jugador tuvo línea en ese periodo: la ausencia
+    significa que no jugó ese cuarto, y por eso no se rellena con ceros.
+
+    NO se guarda ninguna tasa per-36. Extrapolar a 36 minutos desde los 4
+    minutos que alguien jugó en un tercer cuarto produce los mismos disparates
+    que el `pace` de jugador (ver el alias `Rate`): el numerador es diminuto y
+    el denominador también.
+    """
+
+    __tablename__ = "player_period_stats"
+    __table_args__ = (
+        Index("ix_pps_player_period", "player_id", "period"),
+        Index("ix_pps_game", "game_id"),
+        # Un periodo son 720 s y una prórroga 300. El margen deja sitio a
+        # correcciones raras y sigue cazando corrupción.
+        CheckConstraint(
+            "seconds_played >= 0 AND seconds_played <= 900",
+            name="ck_pps_seconds_range",
+        ),
+        CheckConstraint("period >= 1", name="ck_pps_period_positivo"),
+    )
+
+    game_id: Mapped[str] = mapped_column(
+        String(20), ForeignKey("games.game_id", ondelete="CASCADE"), primary_key=True
+    )
+    player_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("players.player_id"), primary_key=True
+    )
+    period: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+
+    # Equipo en ese partido, igual que en `player_game_stats`: resuelve los
+    # traspasos sin lógica especial.
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.team_id"))
+
+    seconds_played: Mapped[int] = mapped_column(Integer, default=0)
+
+    pts: Mapped[int | None] = mapped_column(Count)
+    fgm: Mapped[int | None] = mapped_column(Count)
+    fga: Mapped[int | None] = mapped_column(Count)
+    fg3m: Mapped[int | None] = mapped_column(Count)
+    fg3a: Mapped[int | None] = mapped_column(Count)
+    ftm: Mapped[int | None] = mapped_column(Count)
+    fta: Mapped[int | None] = mapped_column(Count)
+    oreb: Mapped[int | None] = mapped_column(Count)
+    dreb: Mapped[int | None] = mapped_column(Count)
+    reb: Mapped[int | None] = mapped_column(Count)
+    ast: Mapped[int | None] = mapped_column(Count)
+    stl: Mapped[int | None] = mapped_column(Count)
+    blk: Mapped[int | None] = mapped_column(Count)
+    tov: Mapped[int | None] = mapped_column(Count)
+    pf: Mapped[int | None] = mapped_column(Count)
+    plus_minus: Mapped[int | None] = mapped_column(SmallInteger)
+
+
+class GameOfficial(Base):
+    """Árbitro de un partido. Una fila por partido y árbitro (tres por partido).
+
+    No hay tabla de dimensión `officials`: el árbitro no tiene ficha, ni
+    estadísticas, ni nada que colgar de él. Guardar el nombre desnormalizado
+    aquí evita una tabla de 3 columnas cuyo único uso sería un JOIN.
+    """
+
+    __tablename__ = "game_officials"
+
+    game_id: Mapped[str] = mapped_column(
+        String(20), ForeignKey("games.game_id", ondelete="CASCADE"), primary_key=True
+    )
+    official_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(String(60))
+    jersey_number: Mapped[str | None] = mapped_column(String(4))
+
 
 class PlayerGameStats(Base):
     """Box score tradicional de jugador. Una fila por jugador y partido.
