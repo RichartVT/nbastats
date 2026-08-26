@@ -414,6 +414,79 @@ class PlayerPeriodStats(Base):
     plus_minus: Mapped[int | None] = mapped_column(SmallInteger)
 
 
+class TeamSeasonRating(Base):
+    """Fuerza de un equipo al cierre de una temporada, ajustada por rival.
+
+    Se guarda en vez de calcularse al vuelo porque el ajuste es una regresión
+    sobre las ~2.460 filas de la temporada: rápido para una vez, no para cada
+    petición. Es la misma razón por la que existen las vistas materializadas.
+
+    `home_advantage` y `league_mean` son del modelo, no del equipo, y se repiten
+    en las 30 filas de cada temporada. Es desnormalización deliberada: una tabla
+    aparte de 5 filas para evitar repetir dos números obligaría a un JOIN en
+    todas las consultas y no ahorraría nada medible.
+    """
+
+    __tablename__ = "team_season_ratings"
+
+    season_id: Mapped[str] = mapped_column(
+        String(7), ForeignKey("seasons.season_id"), primary_key=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("teams.team_id"), primary_key=True
+    )
+
+    offense: Mapped[Decimal] = mapped_column(Rate)
+    """Puntos por 100 posesiones por encima de la media de la liga."""
+
+    defense: Mapped[Decimal] = mapped_column(Rate)
+    """Puntos por 100 que evita respecto a la media. POSITIVO = buena defensa."""
+
+    net: Mapped[Decimal] = mapped_column(Rate)
+    games: Mapped[int] = mapped_column(SmallInteger)
+
+    home_advantage: Mapped[Decimal] = mapped_column(Rate)
+    league_mean: Mapped[Decimal] = mapped_column(Rate)
+
+
+class GamePrediction(Base):
+    """Probabilidad que el modelo dio a un partido ANTES de jugarse.
+
+    Es inmutable por diseño: una predicción escrita no se reescribe. Un modelo
+    nuevo es una `model_version` nueva. Sin eso, el backtest "mejora" solo cada
+    vez que alguien toca algo, y deja de ser una medición para convertirse en
+    una opinión sobre uno mismo.
+
+    Solo existen filas para los partidos que el backtest pudo evaluar de verdad:
+    ambos equipos con al menos 20 partidos previos, y el modelo entrenado con
+    temporadas anteriores. La ausencia de fila significa "no evaluable", no
+    "el modelo falló".
+    """
+
+    __tablename__ = "game_predictions"
+
+    game_id: Mapped[str] = mapped_column(
+        String(20), ForeignKey("games.game_id", ondelete="CASCADE"), primary_key=True
+    )
+    model_version: Mapped[str] = mapped_column(String(20), primary_key=True)
+
+    home_win_prob: Mapped[Decimal] = mapped_column(Pct)
+    expected_margin: Mapped[Decimal] = mapped_column(Rate)
+    margin_sigma: Mapped[Decimal] = mapped_column(Rate)
+
+    rating_diff: Mapped[Decimal] = mapped_column(Rate)
+    rest_diff: Mapped[Decimal] = mapped_column(Rate)
+    b2b_diff: Mapped[Decimal] = mapped_column(Rate)
+
+    # Las dos rutas por separado: si discrepan, el número publicado no es de
+    # fiar y hay que poder verlo sin recalcular nada.
+    prob_logit: Mapped[Decimal] = mapped_column(Pct)
+    prob_margin: Mapped[Decimal] = mapped_column(Pct)
+
+    train_games: Mapped[int] = mapped_column(Integer)
+    fitted_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+
 class PlayByPlay(Base):
     """Un evento de un partido. ~525 por partido, ~3,5 M en cinco temporadas.
 

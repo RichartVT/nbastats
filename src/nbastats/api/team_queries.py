@@ -303,3 +303,51 @@ def _ordenar(dimension: Dimension, grupos: dict[str, list[float]]) -> dict[str, 
     else:
         orden = sorted(grupos)
     return {k: grupos[k] for k in orden if k in grupos}
+
+
+def get_ratings(session: Session, season: str | None = None) -> list[dict]:
+    """Los 30 equipos ordenados por fuerza neta ajustada por rival."""
+    sql = text("""
+        SELECT r.season_id, r.team_id, t.abbreviation, t.full_name,
+               t.conference, r.offense, r.defense, r.net, r.games,
+               r.home_advantage, r.league_mean
+        FROM team_season_ratings r
+        JOIN teams t USING (team_id)
+        WHERE r.season_id = COALESCE(
+            :season, (SELECT MAX(season_id) FROM team_season_ratings))
+        ORDER BY r.net DESC
+    """)
+    return [dict(f) for f in session.execute(sql, {"season": season}).mappings()]
+
+
+def get_rating(session: Session, team_id: int, season: str | None = None) -> dict | None:
+    filas = [r for r in get_ratings(session, season) if r["team_id"] == team_id]
+    return filas[0] if filas else None
+
+
+def get_predictions(session: Session, season: str | None = None) -> list[dict]:
+    """Predicciones fuera de muestra, con el resultado real al lado.
+
+    Solo hay fila para los partidos que el backtest pudo evaluar: ambos equipos
+    con 20+ partidos previos y el modelo entrenado con temporadas anteriores.
+    La ausencia significa "no evaluable", no "el modelo falló".
+    """
+    extra = " AND g.season_id = :season" if season else ""
+    sql = text(f"""
+        SELECT p.game_id, g.season_id, g.game_date_local AS date,
+               p.home_win_prob, p.expected_margin, p.margin_sigma,
+               p.rating_diff, p.prob_logit, p.prob_margin,
+               h.won AS home_won, h.plus_minus AS margin,
+               ht.abbreviation AS home, at.abbreviation AS away
+        FROM game_predictions p
+        JOIN games g USING (game_id)
+        JOIN team_game_stats h ON h.game_id=p.game_id AND h.team_id=g.home_team_id
+        JOIN teams ht ON ht.team_id=g.home_team_id
+        JOIN teams at ON at.team_id=g.away_team_id
+        WHERE TRUE {extra}
+        ORDER BY g.game_date_local
+    """)
+    params = {"season": season} if season else {}
+    return [dict(f) for f in session.execute(sql, params).mappings()]
+
+

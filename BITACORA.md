@@ -964,6 +964,70 @@ localía y descanso.
 
 ---
 
+## Fase 14 — Ratings ajustados por rival
+
+`analysis/ratings.py`. Una fila por equipo y partido:
+
+    anotados_por_100 = μ + O(equipo) − D(rival) + h·(local ? +1 : −1)
+
+Mínimos cuadrados con **filas aumentadas** para la regularización, en vez de un
+optimizador: forma cerrada, se ve exactamente qué columnas se penalizan —las de
+equipo sí, `μ` y la localía no— y no hay nada que pueda dejar de converger.
+
+**λ no se busca a ciegas: es la `k` medida.** `stability.py` sobre estos datos da
+k≈12 para el rating ofensivo (SD entre partidos 11,2; diferencia real entre
+equipos 3,27) y k≈15 para el defensivo. λ ES esa k, así que el único parámetro
+libre del modelo ya venía medido.
+
+### Validación contra ligas sintéticas
+
+Con equipos de fuerza conocida se recupera la verdad: correlación **0,96** en
+ataque y **0,92** en defensa, y la localía estimada en 1,87 frente a 2,0 reales.
+
+### Resultado del backtest walk-forward
+
+Reajuste por fecha, usando solo partidos anteriores; ambos equipos con ≥20
+partidos previos; sin sedes neutrales. 4.596 partidos.
+
+| Método | Acierta el ganador |
+|---|---|
+| Gana el local | 54,42 % |
+| Gana el de mejor récord | 64,25 % |
+| Diferencial de puntos sin ajustar | 64,12 % |
+| **Ridge ajustado por rival** | **65,47 %** |
+
+McNemar sobre los pares discordantes:
+
+| Contra | Diferencia | p |
+|---|---|---|
+| Gana el local | +11,05 pp | <0,0001 |
+| Diferencial de puntos | +1,35 pp | **0,030** |
+| Gana el de mejor récord | +1,22 pp | **0,063** |
+
+**Lectura honesta.** Bate al diferencial de puntos de forma significativa, y ahí
+queda demostrado que el ajuste por rival aporta algo real. Contra la línea base
+del récord se queda en **p=0,063**: por encima, pero no distinguible del ruido al
+5 %. El criterio del plan era batir el 64,4 %; lo bate en el número, no con
+holgura estadística.
+
+No se toca nada más para "arreglar" ese p-valor: seguir probando variantes hasta
+cruzar el 0,05 es exactamente la pesca de patrones que este proyecto existe para
+no hacer. El siguiente paso —probabilidades y calibración— estaba en el plan
+desde antes de ver este número, y usa mucha más información que el signo del
+margen, así que es la comparación que decide de verdad.
+
+### `league_mean` no es lo que parece
+
+Un test falló al no recuperar la media del proceso generador (110,8 estimada
+frente a 115 real). **El fallo era del test.** `O` y `D` solo están determinados
+hasta una constante, la regularización los centra en cero, y `league_mean`
+absorbe su media. Comprobado: `league_mean` coincide **exactamente** con la
+anotación media de las filas. Es la parametrización útil —lo que devuelve es la
+anotación real de la liga— pero quedó documentado, porque quien lea el
+coeficiente esperando "el μ del modelo" va a leer otra cosa.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
