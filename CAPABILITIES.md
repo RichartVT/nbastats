@@ -337,6 +337,22 @@ decididos al empezar el último cuarto (~20-25 %) y avisar; corregirlo de verdad
 exige reconstruir el contexto del marcador tiro a tiro desde el play-by-play,
 que ya está cargado pero todavía no explotado así.
 
+**Y el acierto tampoco es lo contrario de una elección.** Se probó la vía más
+prometedora que quedaba: separar *dónde* se tira (decisión) de *si entra*
+(supuesto azar) usando la localización de los 1.168.487 tiros del play-by-play.
+La primera mitad se confirma —la calidad de tiro se estabiliza en **k=5,9
+partidos**— pero la segunda es falsa: **anotar por encima de lo esperado dada la
+localización se estabiliza en k=14,2 y persiste entre temporadas a ρ=+0,584**,
+más que la propia elección de tiro y más que el neto del equipo. Es talento, no
+suerte. Cualquier motor que lo normalice está tirando información, y por eso el
+estimador que lo hacía perdió entre un 17 % y un 25 %.
+
+**Trampa de datos, anotada para que nadie la repita:** el triple de esquina viene
+con `shot_distance = 0` — 75.849 tiros, el 16 % de todos los triples, en las
+cinco temporadas. Hay que calcular la distancia desde las coordenadas (validado:
+diferencia media de 0,25 pies y ninguna discrepancia mayor de 1,5 sobre el millón
+de tiros donde sí hay distancia declarada).
+
 ### "Debió ganar" no es una pregunta contestable con esto
 
 Se puede decir **de dónde salieron los puntos** de un partido con precisión

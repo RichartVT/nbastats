@@ -41,6 +41,7 @@ Documentos hermanos:
 | 19 | Índice de ausencias | ✅ Completa — 21,4 pp de recorrido, 13.204/13.204 |
 | 20 | `/expected` y `/stability` en pantalla | ✅ Completa — residuo 3,2e-14 |
 | 21 | Deuda de mantenimiento | ✅ Completa — `daily` completo, obsolescencia visible, oxlint a cero |
+| 22 | Calidad de tiro desde el play-by-play | ✅ Completa — **resultado negativo**, línea cerrada |
 
 **Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
@@ -1729,6 +1730,113 @@ métricas, que es la comprobación de que solo se movió de sitio.
 
 ---
 
+## Fase 22 — Calidad de tiro: segundo resultado negativo, y esta vez con mecanismo
+
+La última vía con mecanismo real para rescatar el motor de resultado esperado.
+**No la rescata**, y ahora se sabe exactamente por qué.
+
+### El criterio, escrito antes de mirar
+
+Copiado del plan y sin tocar después: la media de los primeros k partidos debe
+predecir el margen medio del resto de la temporada con menor RMSE que el margen
+real. **Si a k=10 y k=20 no gana, se publica el negativo y se cierra.**
+
+Estimador principal: el margen real quitando la suerte de tiro de los dos
+equipos, donde "suerte" es lo anotado por encima de lo esperado **según dónde se
+tiró**. Cualquier variante secundaria no cambia el veredicto.
+
+### Un fallo de datos que había que encontrar primero
+
+**75.849 triples —el 16 % de todos— venían con `shot_distance = 0`**, que es
+imposible. No era corrupción: es sistemático, un 16 % en las cinco temporadas.
+Sus coordenadas dan una distancia de 21,9 a 23,5 pies. Son los **triples de
+esquina**, que la NBA reporta con distancia cero.
+
+Construir sobre `shot_distance` habría etiquetado el tiro más eficiente del
+baloncesto como un tiro a bocajarro. Se usan las coordenadas, validadas contra
+la distancia declarada donde ésta no es cero: sobre 1.048.714 tiros, diferencia
+media de 0,25 pies y **ni uno solo** que discrepe más de 1,5.
+
+Con eso, el dato que justificaba la vía aparece limpio: la esquina entra al
+**38,52 %** y el resto del arco al **35,05 %**, tres pies más lejos.
+
+El motor cuadra exacto contra el box score: los puntos de campo reconstruidos
+desde el play-by-play coinciden con `2·FGM + FG3M` en los **13.204** equipo-partido,
+sin una excepción.
+
+### El resultado
+
+RMSE fuera de muestra, 150 equipos-temporada:
+
+| k | Margen real | Calidad de tiro (los dos) | Solo el ataque | Solo lo concedido |
+|---|---|---|---|---|
+| 10 | **5,003** | 5,869 | 6,112 | 5,420 |
+| 20 | **4,300** | 5,367 | 5,558 | 4,819 |
+| 30 | **4,261** | 5,241 | 5,330 | 4,656 |
+| 41 | **4,254** | 5,491 | 5,364 | 4,713 |
+
+**Pierde en los cuatro cortes, entre un 17 % y un 25 %.** Peor que las cinco
+formulaciones de la fase 13. No hay ambigüedad que interpretar.
+
+### Por qué falla, que es lo que hace útil el negativo
+
+La hipótesis tenía dos mitades. La primera se confirma; la segunda es falsa.
+
+| | k | Clase |
+|---|---|---|
+| Calidad de tiro por intento — la **decisión** | **5,9** | Habilidad |
+| Anotado por encima de lo esperado — el **acierto** | **14,2** | **Habilidad** |
+| Margen real | 8,4 | Habilidad |
+
+**El acierto condicionado a la localización NO es ruido: se estabiliza en 14
+partidos.** El estimador estaba tirando a la basura algo que se repite, y por eso
+empeora. Condicionar por dónde se tira no convierte el resto en azar.
+
+Y entre temporadas, que es la prueba que no admite "racha caliente":
+
+| | ρ |
+|---|---|
+| Anotar por encima de lo esperado | **+0,584 ± 0,061** |
+| Calidad de tiro (la decisión) | +0,557 ± 0,063 |
+| *(referencia: el neto del equipo, fase 18)* | *+0,542* |
+
+**El "acierto" persiste entre temporadas MÁS que la propia elección de tiro, y
+más que el neto del equipo.** Sobrevive al verano, a los traspasos y al draft.
+Llamarlo suerte era sencillamente falso — es talento de tiro, que es de las
+cosas más reales que hay en el baloncesto.
+
+### Y además ya estaba contado
+
+Controlando por la diferencia de rating ajustado por rival, la habilidad de tiro
+**no añade nada**: ΔR² de 0,003 puntos, coeficiente −0,022 con p=0,619. Su
+correlación con el rating es de **+0,572**. Los ratings ya la llevan dentro,
+porque un equipo que mete más tiros anota más y eso es exactamente lo que el
+rating mide.
+
+Así que no solo no mejora el estimador: no había nada que añadir.
+
+### Qué queda
+
+La línea se cierra, como decía el criterio. Lo que se queda escrito:
+
+1. **El triple de esquina viene con `shot_distance = 0`.** Es una trampa que
+   cualquiera volvería a pisar.
+2. **El acierto de tiro es habilidad** (k=14,2, ρ=+0,584), y no debe tratarse
+   como ruido en ningún motor futuro. Es la tercera vez que este proyecto
+   tropieza con lo mismo: en la fase 13 con el acierto de 2 y el de libres, y
+   aquí con el acierto condicionado a la localización.
+3. **La calidad de tiro sí es una característica estable de equipo** (k=5,9,
+   ρ=+0,557). No sirve para estimar fuerza mejor que el margen, pero describe
+   bien cómo genera sus tiros un equipo. Queda medido, sin endpoint, con el
+   motivo escrito — el mismo precedente que la curva de edad.
+
+Dos resultados negativos seguidos sobre la misma pregunta, los dos con su prueba
+fijada antes y publicados enteros. El motor de resultado esperado se queda donde
+estaba en la fase 13: **la atribución es exacta y se publica; el veredicto sobre
+el mérito no**.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -1745,17 +1853,11 @@ publicar los resultados negativos (la curva de edad, el motor de resultado
 esperado) es un activo. Lo que hay no está mal construido; lo que sobra es
 **distancia entre lo construido y lo cableado**.
 
-Orden acordado para lo siguiente. Los puntos 1 y 3 **no cuestan una sola petición a la NBA**:
+Orden acordado para lo siguiente. 
 
-1. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
-   distancia**. Es la única vía con mecanismo real para rescatar el motor de
-   resultado esperado, separando la *decisión* de tiro (estable, k=3) del
-   *acierto* (ruido). Se propone con **la prueba fijada de antemano**, la misma
-   que ya falló una vez: si a k=10 y k=20 no gana, se publica el negativo y se
-   cierra la línea.
-2. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
+1. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
    `games_played` en la misma migración, que es la trampa anotada en la fase 10.
-3. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
+2. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
    pregunta más valiosa del proyecto: distinguir "está en declive" de "tiene 34
    años y le pasa lo que a todos".
 
