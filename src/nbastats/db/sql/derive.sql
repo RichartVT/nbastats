@@ -99,6 +99,11 @@ WITH apariciones AS (
            g.game_date_local AS fecha, pgs.seconds_played
     FROM player_game_stats pgs
     JOIN games g ON g.game_id = pgs.game_id
+    -- APARICIÓN, no fila. Desde que se carga la titularidad, la tabla guarda
+    -- también a quien no jugó; contarlo aquí hundiría los minutos habituales
+    -- (un DNP son 0 minutos) y, peor, haría que un lesionado dejara de contar
+    -- como ausente justo por tener fila de lesionado.
+    WHERE pgs.dnp_reason IS NULL
 ),
 perfil AS (
     SELECT player_id, team_id, season_id,
@@ -139,6 +144,10 @@ ausentes AS (
     FROM candidatos c
     LEFT JOIN player_game_stats p
            ON p.game_id = c.game_id AND p.player_id = c.player_id
+          AND p.dnp_reason IS NULL
+    -- Ausente = NO JUGÓ, que ya no es lo mismo que "no tiene fila": un
+    -- lesionado ahora tiene fila, con su motivo. El `AND` va en el JOIN y no
+    -- en el WHERE a propósito — en el WHERE anularía el LEFT JOIN.
     WHERE p.player_id IS NULL
     GROUP BY 1, 2
 )

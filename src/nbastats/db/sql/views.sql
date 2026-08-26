@@ -96,7 +96,17 @@ JOIN players p          ON p.player_id = pgs.player_id
 JOIN team_game_stats tgs ON tgs.game_id = pgs.game_id AND tgs.team_id = pgs.team_id
 LEFT JOIN player_game_advanced pga
        ON pga.game_id = pgs.game_id AND pga.player_id = pgs.player_id
-WHERE g.season_type <> 'preseason';
+WHERE g.season_type <> 'preseason'
+  -- LOS DNP SE QUEDAN FUERA DE LA CAPA DE TASAS, y este filtro es el que
+  -- impide que la ingesta de titularidad rompa cosas en silencio.
+  --
+  -- `player_game_stats` guarda ahora también a quien NO jugó (lesionado,
+  -- descarte técnico, descanso). Son filas legítimas —un DNP es un hecho— pero
+  -- **no son apariciones**, y todo lo que cuelga de esta vista las contaría:
+  -- `games_played` es un `COUNT(*)`, y los promedios por partido dividen por
+  -- él. Filtrando aquí, `mv_player_season` y todo lo demás siguen significando
+  -- lo mismo que antes sin tocar una sola línea más.
+  AND pgs.dnp_reason IS NULL;
 
 -- El acceso dominante es "todos los partidos de un jugador, en orden".
 CREATE INDEX ix_mvpgr_player_date ON mv_player_game_rates (player_id, game_date_local);
@@ -126,8 +136,10 @@ SELECT
     -- desviaba nuestros promedios de los publicados en NBA.com hasta en 0,3
     -- puntos para jugadores de rotación corta — poco, pero visible, y quien
     -- compare con la fuente oficial lo leerá como un error nuestro.
-    -- La fuente solo incluye jugadores que aparecieron, así que COUNT(*) es
-    -- exactamente eso.
+    -- Partidos en los que APARECIÓ. La vista de la que se lee ya excluye los
+    -- DNP, así que `COUNT(*)` sigue siendo exactamente eso — pero conviene
+    -- saber que depende de aquel filtro y no de que la fuente no los traiga,
+    -- que es lo que era cierto hasta la fase 23.
     COUNT(*)                                        AS games_played,
 
     -- Partidos con minutos reales. Es el denominador correcto para cualquier

@@ -943,6 +943,9 @@ def get_game_absences(session: Session, game_id: str) -> dict[int, list[dict]]:
             FROM player_game_stats pgs
             JOIN games g ON g.game_id = pgs.game_id
             WHERE g.season_id = (SELECT season_id FROM partido)
+              -- Aparición, no fila: desde la fase 23 la tabla guarda también a
+              -- quien no jugó, con su motivo.
+              AND pgs.dnp_reason IS NULL
               AND pgs.team_id IN (
                   SELECT home_team_id FROM partido
                   UNION SELECT away_team_id FROM partido)
@@ -957,6 +960,7 @@ def get_game_absences(session: Session, game_id: str) -> dict[int, list[dict]]:
             FROM player_game_stats pgs
             JOIN games g ON g.game_id = pgs.game_id
             WHERE g.season_id = (SELECT season_id FROM partido)
+              AND pgs.dnp_reason IS NULL
             GROUP BY 1
         ),
         fi AS (
@@ -964,7 +968,12 @@ def get_game_absences(session: Session, game_id: str) -> dict[int, list[dict]]:
             WHERE season_id = (SELECT season_id FROM partido)
         )
         SELECT pf.team_id, pf.player_id, p.full_name,
-               ROUND(pf.mh::numeric, 1) AS usual_minutes
+               ROUND(pf.mh::numeric, 1) AS usual_minutes,
+               -- POR QUÉ faltó, cuando la fuente lo dice. Antes solo se podía
+               -- deducir el hueco; ahora se distingue una lesión de un
+               -- descarte técnico.
+               (SELECT x.dnp_reason FROM player_game_stats x
+                 WHERE x.game_id = pa.game_id AND x.player_id = pf.player_id) AS reason
         FROM pf
         JOIN ul USING (player_id)
         CROSS JOIN fi
@@ -975,7 +984,8 @@ def get_game_absences(session: Session, game_id: str) -> dict[int, list[dict]]:
               AND (CASE WHEN pf.hasta = ul.u AND pf.pj >= 10 THEN fi.fin ELSE pf.hasta END)
           AND NOT EXISTS (
               SELECT 1 FROM player_game_stats x
-              WHERE x.game_id = pa.game_id AND x.player_id = pf.player_id)
+              WHERE x.game_id = pa.game_id AND x.player_id = pf.player_id
+                AND x.dnp_reason IS NULL)
         ORDER BY pf.team_id, usual_minutes DESC
     """)
     salida: dict[int, list[dict]] = {}
@@ -985,6 +995,7 @@ def get_game_absences(session: Session, game_id: str) -> dict[int, list[dict]]:
                 "player_id": f["player_id"],
                 "full_name": f["full_name"],
                 "usual_minutes": float(f["usual_minutes"]),
+                "reason": f["reason"],
             }
         )
     return salida
@@ -1111,3 +1122,4 @@ def get_team_game_series(session: Session, season: str | None = None) -> list[di
           AND (CAST(:season AS text) IS NULL OR t.season_id = CAST(:season AS text))
     """)
     return [dict(f) for f in session.execute(sql, {"season": season}).mappings()]
+

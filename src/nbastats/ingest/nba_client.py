@@ -311,6 +311,30 @@ class NBAClient:
             raise
         return payload.get("boxScoreSummary") or {}
 
+    def box_score_traditional(self, game_id: str) -> dict:
+        """Box score tradicional de un partido, con titularidad y motivo de DNP.
+
+        Es lo ÚNICO que trae estos dos campos, y no hay atajo masivo: los game
+        logs no dicen quién salió de inicio. Cuesta una petición por partido, la
+        misma tarifa que los resúmenes.
+
+        Dos cosas que no son obvias y de las que depende el parseo:
+
+        1. **`position` viene rellena solo para los cinco titulares.** No hay un
+           campo `starter`; la posición ES el indicador. Comprobado: exactamente
+           10 por partido, 5 por equipo.
+        2. **Incluye a quienes NO jugaron**, con el motivo en `comment`
+           (`DND - Injury/Illness`, `DNP - Coach's Decision`, `DND - Rest`).
+           Son entre 3 y 11 por partido, y son filas nuevas: la fuente de la
+           carga masiva solo traía a los que aparecieron.
+        """
+        from nba_api.stats.endpoints import boxscoretraditionalv3
+
+        payload = self._call_raw(
+            boxscoretraditionalv3.BoxScoreTraditionalV3, game_id=game_id
+        )
+        return payload.get("boxScoreTraditional") or {}
+
     def play_by_play(self, game_id: str) -> list[dict]:
         """Todos los eventos de un partido, ~525.
 
