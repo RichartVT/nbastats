@@ -364,6 +364,9 @@ export interface AbsentPlayer {
   player_id: number
   full_name: string
   usual_minutes: number
+  /** "DND - Injury/Illness", "DNP - Coach's Decision"… `null` si no se vistió
+   *  y la fuente ni siquiera lo lista. */
+  reason: string | null
 }
 
 /** Cuánta rotación faltaba. Va en el contexto PREVIO al partido, nunca en el
@@ -781,5 +784,44 @@ export interface StabilityTable {
   season: string | null
   components: StabilityComponent[]
   boundaries: { skill_max_k: number; mixed_max_k: number }
+  note: string
+}
+
+
+// --- Curva de edad ---
+
+export interface AgeCurvePoint {
+  age: number
+  index: number
+  cumulative: number | null
+}
+
+export interface AgeBand {
+  label: string
+  from_age: number
+  to_age: number
+  n_transitions: number
+  mean_change: number
+  ci95_low: number
+  ci95_high: number
+  distinguishable: boolean
+}
+
+export interface AgeCurve {
+  stat: string
+  stat_label: string
+  n_player_seasons: number
+  n_transitions: number
+  reference_age: number
+  reference_level: number
+  peak_age: number | null
+  /** Intra-jugador: no le afecta quién sigue en la liga. */
+  delta_curve: AgeCurvePoint[]
+  /** La sesgada. Va al lado a propósito, para poder VER la diferencia. */
+  cross_sectional: AgeCurvePoint[]
+  cross_sectional_peak: number | null
+  yearly: unknown[]
+  bands: AgeBand[]
+  caveat: string
   note: string
 }

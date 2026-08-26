@@ -42,11 +42,12 @@ Documentos hermanos:
 | 20 | `/expected` y `/stability` en pantalla | ✅ Completa — residuo 3,2e-14 |
 | 21 | Deuda de mantenimiento | ✅ Completa — `daily` completo, obsolescencia visible, oxlint a cero |
 | 22 | Calidad de tiro desde el play-by-play | ✅ Completa — **resultado negativo**, línea cerrada |
+| 23 | Curva de edad por método delta | ✅ Completa — sesgo corregido y medido |
 
 **Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
 marcador por periodo · 1.030 jugadores con biografía completa · 5 temporadas
-(2021-22 → 2025-26) · 516 tests · 15 migraciones · **844 MB**.
+(2021-22 → 2025-26) · 523 tests · 15 migraciones · **844 MB**.
 
 ---
 
@@ -1837,6 +1838,89 @@ el mérito no**.
 
 ---
 
+## Fase 23 — La curva de edad, por fin sin sesgo de supervivencia
+
+La pregunta que el proyecto llevaba desde la fase 4 llamando "la más valiosa", y
+la única funcionalidad con endpoint **deliberadamente no expuesto** porque el
+método para responderla no estaba.
+
+### El sesgo, y por qué es tan grande
+
+La curva transversal ajusta todos los jugadores y todas las edades a la vez. El
+problema es que a los 36 años **solo quedan los que envejecieron bien**: quien
+declinó de verdad no aparece promediando poco, aparece fuera de la liga. La
+muestra se selecciona sola y el declive se le escapa.
+
+Los números del proyecto lo enseñaban: pico a los 28,9 años y solo un 2 % de
+caída a los 34. Ningún deportista real se comporta así.
+
+### El método delta
+
+Comparar a cada jugador **consigo mismo** entre temporadas consecutivas. Al ser
+intra-jugador, quién entra o sale de la liga deja de importar.
+
+| Edad | Transversal | Delta |
+|---|---|---|
+| 22 | 96,0 % | 92,1 % |
+| 25 | 98,7 % | 100 % |
+| 28 | 99,9 % | 99,7 % |
+| 31 | 99,6 % | 97,4 % |
+| **34** | **97,8 %** | **89,3 %** |
+
+Los dos se devuelven juntos en `/age-curve` y se dibujan juntos en pantalla, a
+propósito: **el argumento es la diferencia**, y enseñar solo la corregida
+obligaría a creérsela.
+
+### La prueba: un mundo sintético donde la verdad se conoce
+
+Se inventa una curva, se generan 400 carreras, y se les aplica la misma regla
+que aplica la liga — al que baja de un umbral se le deja de fichar y no vuelve.
+Entonces se pregunta qué método recupera la curva verdadera:
+
+| Edad | Verdad | Transversal | Delta |
+|---|---|---|---|
+| 30 | 89,0 % | 93,1 % | 90,1 % |
+| 32 | 75,2 % | 83,7 % | 77,3 % |
+| **34** | **56,0 %** | **70,3 %** | **61,7 %** |
+| 36 | 31,2 % | 53,1 % | 42,4 % |
+
+**El delta corrige más de la mitad del error.** Y se queda corto, que es
+exactamente lo que promete: hay un test que **exige** que no sobrepase el
+declive real, porque un jugador solo aporta el paso de t a t+1 si jugó las dos
+temporadas, y quien se cae a los 34 aporta su último paso pero no el siguiente.
+Si algún día ese test empezara a fallar por acertar, habría que revisar el aviso.
+
+### El hallazgo que el sesgo escondía
+
+Por tramos, contra uno mismo, y sobre cuatro estadísticas independientes:
+
+| Tramo | Puntos/36 | Game Score | TS% | Minutos |
+|---|---|---|---|---|
+| 19-22 | +1,268 * | +1,477 * | +0,010 * | +1,425 * |
+| 23-25 | +0,256 | +0,356 * | +0,003 | +0,149 |
+| 26-28 | −0,034 | −0,042 | +0,001 | −0,303 |
+| 29-31 | −0,103 | −0,477 * | +0,002 | −1,231 * |
+| **32+** | **−0,615 \*** | **−0,987 \*** | −0,003 | **−2,008 \*** |
+
+*(\* = se distingue de cero al 95 %)*
+
+**La eficiencia de tiro no envejece.** El TS% y el eFG% no muestran caída
+distinguible ni siquiera pasados los 32; las asistencias tampoco. Lo que cae son
+los puntos, los rebotes, el Game Score y sobre todo **los minutos: −2,0 por
+temporada**. No se pierde puntería ni criterio: se pierde el rol.
+
+Los pasos de un año, por separado, casi nunca alcanzan significación — con cinco
+temporadas cada transición tiene entre 20 y 90 jugadores. Los tramos son la
+lectura sobre la que se puede afirmar algo, y así se enseña.
+
+### Dónde vive
+
+En `/tendencias`, debajo de la lista de jugadores al alza y en declive, que es
+donde tiene sentido: sin la curva, "este jugador cae" no se distingue de "este
+jugador tiene 34 años y le pasa lo que a todos". Que era la pregunta.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -1857,9 +1941,7 @@ Orden acordado para lo siguiente.
 
 1. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
    `games_played` en la misma migración, que es la trampa anotada en la fase 10.
-2. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
-   pregunta más valiosa del proyecto: distinguir "está en declive" de "tiene 34
-   años y le pasa lo que a todos".
+
 
 Descartado a propósito: quintetos como funcionalidad destacada (los 319.323
 eventos de sustitución tienen `sub_type` vacío y el jugador que entra solo existe

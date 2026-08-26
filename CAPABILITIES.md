@@ -295,12 +295,36 @@ pico ajustado: 29,0 años
 ```
 
 Un jugador de 39 años al 91% de su pico no describe a ningún deportista real:
-describe a los pocos que sobrevivieron hasta los 39. La corrección estándar es
-el **método delta** (comparar a cada jugador consigo mismo entre temporadas
-consecutivas, lo que al ser intra-jugador no depende de quién entra o sale de
-la liga). **No está implementado.** Hasta que lo esté, la curva sirve para
-explorar la forma, no para afirmar cuánto declive es "normal" a una edad dada
-— y por eso ningún endpoint la expone todavía.
+describe a los pocos que sobrevivieron hasta los 39.
+
+**Ya está corregido.** El **método delta** —comparar a cada jugador consigo
+mismo entre temporadas consecutivas, lo que al ser intra-jugador no depende de
+quién entra o sale de la liga— está en `fit_delta_age_curve()`, y `/age-curve`
+devuelve **las dos curvas juntas** para que el sesgo se vea en vez de haber que
+creérselo:
+
+| Edad | Transversal | Delta |
+|---|---|---|
+| 22 | 96,0 % | 92,1 % |
+| 25 | 98,7 % | 100 % |
+| 28 | 99,9 % | 99,7 % |
+| 31 | 99,6 % | 97,4 % |
+| **34** | **97,8 %** | **89,3 %** |
+
+Probado contra un mundo sintético donde la verdad se conoce y se aplica la misma
+regla que aplica la liga (al que rinde poco se le deja de fichar): a los 34 la
+verdad es el 56,0 % del pico, la transversal dice **70,3 %** y la delta
+**61,7 %**. Corrige más de la mitad del error.
+
+**Y sigue quedándose corta**, que es lo que hay que saber al leerla: un jugador
+solo aporta el paso de t a t+1 si jugó las dos temporadas, así que quien se cae
+de la liga a los 34 aporta su último paso pero no el siguiente. La regresión a
+la media empuja en la misma dirección.
+
+**El hallazgo que la curva transversal escondía:** por tramos y contra sí mismos,
+la eficiencia de tiro apenas envejece —el TS% cambia −0,003 a partir de los 32,
+que no se distingue de cero— mientras los minutos por partido caen **−2,0 por
+temporada** y el Game Score **−0,99**. No se pierde puntería: se pierde el rol.
 
 ### Los splits de equipo necesitan varias temporadas
 

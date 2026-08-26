@@ -1,4 +1,5 @@
 import type {
+  AgeCurve,
   GameExpected,
   StabilityTable,
   Backtest, Catalog, GameDetail, HeadToHead, LeadersResponse, Player, PlayerFilters,
@@ -119,6 +120,9 @@ export const api = {
   // partido en la tercera posición.
   game: (gameId: string) => get<GameDetail>(`/games/${gameId}`),
   gameExpected: (gameId: string) => get<GameExpected>(`/games/${gameId}/expected`),
+
+  // --- Curva de edad ---
+  ageCurve: (stat = 'pts_per_36') => get<AgeCurve>('/age-curve', { stat }),
 
   // --- Qué se repite ---
   stability: (season?: string) =>

@@ -331,12 +331,14 @@ def fit_age_curve(ages: Sequence[float], values: Sequence[float]) -> AgeCurve | 
     **29,0 años** y solo un 9% de caída a los 39 — cifras que ninguna literatura
     de envejecimiento deportivo respalda.
 
-    La corrección estándar es el **método delta**: comparar a cada jugador
-    consigo mismo entre temporadas consecutivas y promediar esos cambios por
-    edad. Al ser intra-jugador, no lo afecta quién entra o sale de la liga.
-    No está implementado todavía; hasta que lo esté, esta función sirve para
-    explorar la forma de la curva, NO para afirmar cuánto declive es "normal"
-    a una edad dada.
+    La corrección es el **método delta**, y está en `fit_delta_age_curve()`:
+    comparar a cada jugador consigo mismo entre temporadas consecutivas. Al ser
+    intra-jugador, no lo afecta quién entra o sale de la liga.
+
+    Esta función se mantiene, y `/age-curve` devuelve las dos, porque enseñarlas
+    juntas es lo que permite VER el sesgo en vez de tener que creérselo: sobre
+    los datos del proyecto, a los 34 años la transversal dice 97,8 % del pico y
+    la delta 89,3 %.
     """
     x = np.asarray(ages, dtype=float)
     y = np.asarray(values, dtype=float)
@@ -374,3 +376,241 @@ def age_adjusted_residuals(
         float(v - curve.expected(a)) if v is not None else float("nan")
         for a, v in zip(ages, values, strict=True)
     ]
+
+
+# =========================================================================
+# Método delta: la curva de edad sin sesgo de supervivencia
+# =========================================================================
+
+
+@dataclass(frozen=True)
+class AgeDelta:
+    """Cuánto cambia un jugador MEDIO al pasar de una edad a la siguiente."""
+
+    from_age: int
+    to_age: int
+    n_players: int
+    mean_change: float
+    """Cambio medio intra-jugador. Negativo = declive."""
+
+    ci95_low: float
+    ci95_high: float
+
+    @property
+    def distinguishable(self) -> bool:
+        """¿El cambio se distingue de cero?"""
+        return not (self.ci95_low <= 0.0 <= self.ci95_high)
+
+
+@dataclass(frozen=True)
+class DeltaAgeCurve:
+    """La curva reconstruida encadenando los cambios año a año."""
+
+    deltas: list[AgeDelta]
+    cumulative: list[tuple[int, float]]
+    """(edad, cambio acumulado) en las unidades de la propia estadística.
+
+    Es la salida honesta del método: "de los 25 a los 34 se pierden 1,8 puntos
+    por 36 minutos". No necesita ningún supuesto extra."""
+
+    curve: list[tuple[int, float]]
+    """(edad, índice con 100 en `reference_age`).
+
+    Para hacer un índice hace falta un NIVEL, y el método delta solo da
+    cambios. El nivel de referencia se toma de la media transversal a esa edad:
+    ancla la escala, no la forma. La forma sigue saliendo entera de los
+    cambios intra-jugador."""
+
+    reference_level: float
+
+    reference_age: int
+    peak_age: int | None
+    n_transitions: int
+    caveat: str
+
+
+def _cambios_consecutivos(
+    observations: Sequence[tuple[int, int, float]],
+) -> list[tuple[int, float]]:
+    """`(edad_de_partida, cambio)` de cada par de temporadas CONSECUTIVAS.
+
+    Solo se emparejan edades que difieren en exactamente 1. Un jugador que se
+    pierde una temporada entera no aporta un salto de dos años como si fuera de
+    uno: eso mezclaría dos años de envejecimiento en una sola observación.
+    """
+    por_jugador: dict[int, dict[int, float]] = {}
+    for pid, edad, valor in observations:
+        por_jugador.setdefault(int(pid), {})[int(edad)] = float(valor)
+
+    salida: list[tuple[int, float]] = []
+    for temporadas in por_jugador.values():
+        for edad, valor in temporadas.items():
+            siguiente = temporadas.get(edad + 1)
+            if siguiente is not None:
+                salida.append((edad, siguiente - valor))
+    return salida
+
+
+def _media_y_ci(cambios: Sequence[float]) -> tuple[float, float, float]:
+    """Media y su intervalo del 95 %, por error típico."""
+    a = np.asarray(cambios, dtype=float)
+    m = float(a.mean())
+    if len(a) < 2:
+        return m, m, m
+    ee = float(a.std(ddof=1) / np.sqrt(len(a)))
+    return m, m - 1.96 * ee, m + 1.96 * ee
+
+
+def fit_delta_age_curve(
+    observations: Sequence[tuple[int, int, float]],
+    *,
+    min_players_per_age: int = 20,
+    reference_age: int = 25,
+) -> DeltaAgeCurve | None:
+    """Curva de edad por el método delta: cada jugador contra sí mismo.
+
+    `observations` son tríos `(player_id, edad, valor)`, uno por
+    jugador-temporada. Se emparejan las temporadas CONSECUTIVAS del mismo
+    jugador —edades que difieren en exactamente 1— y se promedia el cambio.
+
+    POR QUÉ ESTO ARREGLA EL SESGO. La curva transversal compara jugadores
+    DISTINTOS a edades distintas, y a los 38 solo quedan los que envejecieron
+    bien: la muestra se selecciona sola y el declive desaparece. Aquí cada
+    comparación es del mismo jugador consigo mismo, así que quién siga en la
+    liga no cambia la forma de la curva.
+
+    LO QUE NO ARREGLA, Y HAY QUE DECIRLO. Un jugador solo aporta el paso de t a
+    t+1 si jugó las DOS temporadas. Quien se cae de la liga a los 34 aporta su
+    último paso pero no el siguiente, así que **el método delta sigue
+    subestimando el declive** — mucho menos que el transversal, pero no cero.
+
+    Y la regresión a la media empuja en la misma dirección: entrar en la muestra
+    exige minutos, los minutos siguen al rendimiento, y una temporada buena por
+    suerte se sigue de una peor por pura reversión. No es un efecto de la edad y
+    aquí se cuenta como si lo fuera.
+
+    Se exigen `min_players_per_age` transiciones para publicar una edad: con
+    cinco jugadores el cambio medio es ruido.
+
+    >>> obs = [(1, 24, 10.0), (1, 25, 12.0), (2, 24, 8.0), (2, 25, 9.0)]
+    >>> c = fit_delta_age_curve(obs, min_players_per_age=2, reference_age=24)
+    >>> round(c.deltas[0].mean_change, 2)
+    1.5
+    >>> c.cumulative
+    [(24, 0.0), (25, 1.5)]
+    >>> [(e, round(v, 1)) for e, v in c.curve]
+    [(24, 100.0), (25, 116.7)]
+    """
+    cambios: dict[int, list[float]] = {}
+    for edad, cambio in _cambios_consecutivos(observations):
+        cambios.setdefault(edad, []).append(cambio)
+
+    utiles = {e: c for e, c in cambios.items() if len(c) >= min_players_per_age}
+    if not utiles:
+        return None
+
+    deltas = []
+    for edad in sorted(utiles):
+        m, lo, hi = _media_y_ci(utiles[edad])
+        deltas.append(
+            AgeDelta(
+                from_age=edad, to_age=edad + 1, n_players=len(utiles[edad]),
+                mean_change=m, ci95_low=lo, ci95_high=hi,
+            )
+        )
+
+    # Encadenar. El índice es RELATIVO: la curva dice cuánto se pierde o se gana
+    # respecto a la edad de referencia, no cuánto vale un jugador.
+    edades = [d.from_age for d in deltas] + [deltas[-1].to_age]
+    if reference_age not in edades:
+        reference_age = edades[0]
+
+    acumulado: dict[int, float] = {reference_age: 0.0}
+    for d in deltas:
+        if d.from_age >= reference_age and d.from_age in acumulado:
+            acumulado[d.to_age] = acumulado[d.from_age] + d.mean_change
+    for d in reversed(deltas):
+        if d.to_age <= reference_age and d.to_age in acumulado:
+            acumulado[d.from_age] = acumulado[d.to_age] - d.mean_change
+
+    # El ancla de escala: la media observada a la edad de referencia. Es
+    # transversal, y a esa edad el sesgo de supervivencia es despreciable
+    # —nadie se cae de la liga a los 25 por viejo—, así que sirve de escala sin
+    # contaminar la forma.
+    en_referencia = [v for _, e, v in observations if int(e) == reference_age]
+    nivel = float(np.mean(en_referencia)) if en_referencia else 0.0
+
+    acum = sorted(acumulado.items())
+    curva = (
+        [(e, 100.0 * (nivel + v) / nivel) for e, v in acum]
+        if nivel
+        else [(e, 100.0 + v) for e, v in acum]
+    )
+    pico = max(acumulado, key=lambda e: acumulado[e]) if acumulado else None
+
+    return DeltaAgeCurve(
+        deltas=deltas,
+        cumulative=acum,
+        curve=curva,
+        reference_level=nivel,
+        reference_age=reference_age,
+        peak_age=pico,
+        n_transitions=sum(len(c) for c in utiles.values()),
+        caveat=(
+            "Método delta: cada jugador contra sí mismo, así que no lo afecta "
+            "quién sigue en la liga. Sigue subestimando el declive, porque solo "
+            "aporta un paso quien jugó las dos temporadas, y la regresión a la "
+            "media empuja en la misma dirección."
+        ),
+    )
+
+
+# Tramos de edad. Agrupar no es cosmético: con 5 temporadas cargadas, cada paso
+# de un año tiene entre 20 y 90 jugadores y su cambio medio casi nunca se
+# distingue de cero. En tramos hay potencia para afirmar algo.
+TRAMOS_EDAD: tuple[tuple[int, int, str], ...] = (
+    (19, 22, "19-22"),
+    (23, 25, "23-25"),
+    (26, 28, "26-28"),
+    (29, 31, "29-31"),
+    (32, 45, "32 o más"),
+)
+
+
+@dataclass(frozen=True)
+class AgeBand:
+    label: str
+    from_age: int
+    to_age: int
+    n_transitions: int
+    mean_change: float
+    ci95_low: float
+    ci95_high: float
+
+    @property
+    def distinguishable(self) -> bool:
+        return not (self.ci95_low <= 0.0 <= self.ci95_high)
+
+
+def age_bands(observations: Sequence[tuple[int, int, float]]) -> list[AgeBand]:
+    """Los mismos cambios intra-jugador, agrupados por tramo de edad.
+
+    Es la salida sobre la que se puede afirmar algo: los pasos de un año son
+    demasiado ruidosos por separado y los tramos sí alcanzan significación.
+    """
+    cambios = _cambios_consecutivos(observations)
+
+    salida = []
+    for desde, hasta, etiqueta in TRAMOS_EDAD:
+        de_este = [c for e, c in cambios if desde <= e <= hasta]
+        if len(de_este) < 2:
+            continue
+        m, lo, hi = _media_y_ci(de_este)
+        salida.append(
+            AgeBand(
+                label=etiqueta, from_age=desde, to_age=hasta,
+                n_transitions=len(de_este), mean_change=m,
+                ci95_low=lo, ci95_high=hi,
+            )
+        )
+    return salida

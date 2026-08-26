@@ -1123,3 +1123,47 @@ def get_team_game_series(session: Session, season: str | None = None) -> list[di
     """)
     return [dict(f) for f in session.execute(sql, {"season": season}).mappings()]
 
+
+# Estadísticas sobre las que se puede pedir una curva de edad. Todas son TASAS:
+# una curva sobre totales mediría sobre todo cuántos minutos le dan a uno, que
+# es consecuencia de envejecer y no envejecimiento.
+COLUMNAS_EDAD: dict[str, str] = {
+    "pts_per_36": "Puntos por 36 min",
+    "reb_per_36": "Rebotes por 36 min",
+    "ast_per_36": "Asistencias por 36 min",
+    "ts_pct": "True Shooting %",
+    "efg_pct": "Efective FG %",
+    "avg_game_score": "Game Score medio",
+    "min_per_game": "Minutos por partido",
+}
+
+
+def get_age_observations(
+    session: Session, column: str, *, min_games: int = 30, min_minutes: float = 15.0
+) -> list[tuple[int, int, float]]:
+    """Tríos `(player_id, edad, valor)`, uno por jugador-temporada.
+
+    Los mínimos no son decorativos: sin ellos entran temporadas de 4 partidos
+    cuyo valor es ruido, y el método delta las trataría como un cambio real de
+    un año para otro.
+
+    La edad se redondea a años enteros. `avg_age` es la media de la temporada,
+    así que un jugador que cumple años en enero aparece con una edad
+    intermedia; redondear es lo que permite emparejar temporadas consecutivas.
+    """
+    if column not in COLUMNAS_EDAD:
+        raise ValueError(f"columna no permitida: {column}")
+
+    filas = session.execute(
+        text(f"""
+            SELECT player_id, ROUND(avg_age)::int AS edad, {column}::float AS valor
+            FROM mv_player_season
+            WHERE season_type = 'regular'
+              AND games_played >= :pj
+              AND min_per_game >= :min
+              AND avg_age IS NOT NULL
+              AND {column} IS NOT NULL
+        """),
+        {"pj": min_games, "min": min_minutes},
+    ).all()
+    return [(int(f.player_id), int(f.edad), float(f.valor)) for f in filas]

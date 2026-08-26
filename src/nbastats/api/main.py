@@ -35,7 +35,10 @@ from nbastats.analysis.stability import K_HABILIDAD, K_MIXTO, variance_component
 from nbastats.analysis.trends import (
     MIN_GAMES_FOR_TREND,
     TrendDirection,
+    age_bands,
     analyze_trend,
+    fit_age_curve,
+    fit_delta_age_curve,
     rolling_mean,
 )
 from nbastats.api import queries as q
@@ -64,6 +67,7 @@ from nbastats.api.routers import teams as teams_router
 from nbastats.api.schemas import (
     AbsenceIndexOut,
     AbsentPlayerOut,
+    AgeCurveOut,
     GameDetailOut,
     GameExpectedOut,
     GameLogEntryOut,
@@ -931,5 +935,97 @@ def get_stability(
             "Por debajo de 41 (media temporada) es habilidad; por encima de 82 "
             "(temporada entera) es sobre todo azar. Se mide descontando el ruido "
             "de muestreo, no comparando dispersiones en bruto."
+        ),
+    }
+
+
+@app.get("/age-curve", response_model=AgeCurveOut, tags=["análisis"])
+def get_age_curve(
+    stat: str = Query("pts_per_36", description="Tasa sobre la que medir la edad"),
+    min_games: int = Query(30, ge=1, le=82),
+    min_minutes: float = Query(15.0, ge=0, le=48),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Cuánto declive por edad es NORMAL, sin sesgo de supervivencia.
+
+    Se devuelven las DOS curvas a propósito. La transversal —comparar jugadores
+    distintos a edades distintas— es la que se calculaba antes y la que engaña:
+    a los 36 solo quedan los que envejecieron bien, así que el declive
+    desaparece de la muestra en vez de aparecer en la curva. La delta compara a
+    cada jugador CONSIGO MISMO entre temporadas consecutivas, y por eso no le
+    afecta quién sigue en la liga.
+
+    Enseñar las dos permite ver el sesgo en vez de tener que creérselo.
+
+    Este endpoint no existía hasta ahora, y el motivo estaba escrito: sin el
+    método delta la curva servía para explorar la forma, no para afirmar cuánto
+    declive es normal a una edad dada.
+    """
+    if stat not in q.COLUMNAS_EDAD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estadística no válida. Opciones: {', '.join(q.COLUMNAS_EDAD)}",
+        )
+
+    obs = q.get_age_observations(
+        db, stat, min_games=min_games, min_minutes=min_minutes
+    )
+    if len(obs) < 100:
+        raise HTTPException(404, "Muestra insuficiente con esos mínimos")
+
+    delta = fit_delta_age_curve(obs)
+    if delta is None:
+        raise HTTPException(404, "No hay transiciones suficientes")
+
+    transversal = fit_age_curve([o[1] for o in obs], [o[2] for o in obs])
+    bandas = age_bands(obs)
+
+    return {
+        "stat": stat,
+        "stat_label": q.COLUMNAS_EDAD[stat],
+        "n_player_seasons": len(obs),
+        "n_transitions": delta.n_transitions,
+        "reference_age": delta.reference_age,
+        "reference_level": round(delta.reference_level, 3),
+        "peak_age": delta.peak_age,
+        "delta_curve": [
+            {"age": e, "index": round(v, 1), "cumulative": round(c, 3)}
+            for (e, v), (_, c) in zip(delta.curve, delta.cumulative, strict=True)
+        ],
+        "cross_sectional": (
+            [
+                {"age": e, "index": round(100 * transversal.relative_to_peak(e), 1)}
+                for e, _ in delta.curve
+            ]
+            if transversal
+            else []
+        ),
+        "cross_sectional_peak": (
+            round(transversal.peak_age, 1) if transversal else None
+        ),
+        "yearly": [
+            {
+                "from_age": d.from_age, "to_age": d.to_age, "n_players": d.n_players,
+                "mean_change": round(d.mean_change, 3),
+                "ci95_low": round(d.ci95_low, 3), "ci95_high": round(d.ci95_high, 3),
+                "distinguishable": d.distinguishable,
+            }
+            for d in delta.deltas
+        ],
+        "bands": [
+            {
+                "label": b.label, "from_age": b.from_age, "to_age": b.to_age,
+                "n_transitions": b.n_transitions,
+                "mean_change": round(b.mean_change, 3),
+                "ci95_low": round(b.ci95_low, 3), "ci95_high": round(b.ci95_high, 3),
+                "distinguishable": b.distinguishable,
+            }
+            for b in bandas
+        ],
+        "caveat": delta.caveat,
+        "note": (
+            "Los pasos de un año son ruidosos por separado: con cinco temporadas "
+            "cargadas, cada transición tiene entre 20 y 90 jugadores. Los tramos "
+            "son la lectura sobre la que se puede afirmar algo."
         ),
     }

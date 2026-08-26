@@ -608,6 +608,9 @@ class AbsentPlayerOut(BaseModel):
     player_id: int
     full_name: str
     usual_minutes: float
+    reason: str | None = Field(
+        None, description="Motivo del DNP tal cual lo publica la NBA, si lo dice"
+    )
 
 
 class AbsenceIndexOut(BaseModel):
@@ -971,4 +974,51 @@ class StabilityOut(BaseModel):
     season: str | None = None
     components: list[StabilityComponentOut] = Field(default_factory=list)
     boundaries: StabilityBoundariesOut
+    note: str
+
+
+
+class AgeCurvePointOut(BaseModel):
+    age: int
+    index: float
+    cumulative: float | None = None
+
+
+class AgeDeltaOut(BaseModel):
+    from_age: int
+    to_age: int
+    n_players: int
+    mean_change: float = Field(description="Cambio medio intra-jugador. Negativo = declive")
+    ci95_low: float
+    ci95_high: float
+    distinguishable: bool
+
+
+class AgeBandOut(BaseModel):
+    label: str
+    from_age: int
+    to_age: int
+    n_transitions: int
+    mean_change: float
+    ci95_low: float
+    ci95_high: float
+    distinguishable: bool
+
+
+class AgeCurveOut(BaseModel):
+    """Las dos curvas, a propósito: la sesgada y la corregida."""
+
+    stat: str
+    stat_label: str
+    n_player_seasons: int
+    n_transitions: int
+    reference_age: int
+    reference_level: float
+    peak_age: int | None = None
+    delta_curve: list[AgeCurvePointOut] = Field(default_factory=list)
+    cross_sectional: list[AgeCurvePointOut] = Field(default_factory=list)
+    cross_sectional_peak: float | None = None
+    yearly: list[AgeDeltaOut] = Field(default_factory=list)
+    bands: list[AgeBandOut] = Field(default_factory=list)
+    caveat: str
     note: str
