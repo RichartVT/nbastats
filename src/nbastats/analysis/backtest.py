@@ -23,14 +23,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from nbastats.analysis.forecast import GameFeatures, WinModel, fit_win_model
-from nbastats.analysis.ratings import RatingRow, fit_ratings
+from nbastats.analysis.ratings import RatingRow, SeasonPrior, fit_ratings
 
 MODEL_VERSION = "ridge-logit-1"
 
-# Partidos previos que necesita cada equipo para que su rating signifique algo.
-# Es el mismo umbral con el que se midió la línea base del récord (64,4 %): si
-# se compara contra ella, hay que evaluar el mismo conjunto o la comparación
-# está trucada.
+# Partidos previos que necesita un equipo SIN PRIOR para que su rating signifique
+# algo. Con prior el umbral es 0, porque el rating ya significa algo antes del
+# primer salto inicial: es lo que el equipo era en junio, encogido.
+#
+# Sigue haciendo falta para la primera temporada cargada, que no tiene de dónde
+# heredar. Y cuando se compara contra la línea base del récord hay que evaluar
+# el mismo conjunto en ambos lados, o la comparación está trucada.
 MIN_PREVIOS = 20
 
 # Filas mínimas para que la regresión de ratings tenga sentido: con 30 equipos
@@ -83,8 +86,19 @@ def _features(g: GameRow, neto_local: float, neto_visitante: float) -> GameFeatu
     )
 
 
-def walk_forward(games: Sequence[GameRow]) -> tuple[list[Prediction], dict]:
+def walk_forward(
+    games: Sequence[GameRow], *, usar_prior: bool = True
+) -> tuple[list[Prediction], dict]:
     """Genera las variables de cada partido con ratings sin fuga temporal.
+
+    Con `usar_prior`, cada temporada arranca con lo que los equipos eran al
+    cerrar la anterior, encogido por su persistencia medida. Eso es información
+    disponible antes del primer salto inicial, así que no es fuga — y es lo que
+    permite pronosticar desde el partido 1 en vez de desde el 20.
+
+    `usar_prior=False` reproduce el comportamiento anterior. Existe para poder
+    comparar A/B sobre el MISMO conjunto de partidos, que es la única forma de
+    saber si el prior mejora o solo amplía la cobertura.
 
     Devuelve `(muestras, ratings_finales_por_temporada)`.
     """
@@ -94,6 +108,7 @@ def walk_forward(games: Sequence[GameRow]) -> tuple[list[Prediction], dict]:
 
     muestras: list[Prediction] = []
     finales: dict[str, object] = {}
+    prior: SeasonPrior | None = None
 
     for season in sorted(por_temporada):
         del_dia: dict[dt.date, list[GameRow]] = defaultdict(list)
@@ -102,18 +117,26 @@ def walk_forward(games: Sequence[GameRow]) -> tuple[list[Prediction], dict]:
 
         historial: list[RatingRow] = []
         jugados: dict[int, int] = defaultdict(int)
-        modelo = None
+        # Con prior hay modelo desde el minuto cero; sin él, hasta que haya datos
+        # no hay nada que decir.
+        modelo = prior.as_model() if prior else None
 
         for fecha in sorted(del_dia):
             # 1) Ajustar con lo ANTERIOR. Los partidos de hoy aún no están.
             if len(historial) >= MIN_FILAS_RATING:
-                modelo = fit_ratings(historial)
+                modelo = fit_ratings(historial, prior=prior)
 
             # 2) Predecir los de hoy.
             for g in del_dia[fecha]:
                 if not modelo:
                     continue
-                if jugados[g.home_id] < MIN_PREVIOS or jugados[g.away_id] < MIN_PREVIOS:
+                # Un equipo con prior ya tiene un rating que significa algo
+                # desde su primer partido. Sin prior hace falta esperar.
+                con_prior = prior is not None and (
+                    g.home_id in prior.ratings and g.away_id in prior.ratings
+                )
+                umbral = 0 if con_prior else MIN_PREVIOS
+                if jugados[g.home_id] < umbral or jugados[g.away_id] < umbral:
                     continue
                 local = modelo.ratings.get(g.home_id)
                 visitante = modelo.ratings.get(g.away_id)
@@ -140,7 +163,12 @@ def walk_forward(games: Sequence[GameRow]) -> tuple[list[Prediction], dict]:
                         jugados[tid] += 1
 
         if modelo:
-            finales[season] = fit_ratings(historial) or modelo
+            final = fit_ratings(historial, prior=prior) or modelo
+            finales[season] = final
+            if usar_prior:
+                # El prior de la temporada SIGUIENTE. Sale de los ratings de
+                # cierre de esta, que para la siguiente son pasado.
+                prior = SeasonPrior.from_model(final)
 
     return muestras, finales
 

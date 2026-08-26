@@ -48,6 +48,30 @@ import numpy as np
 # λ por defecto: la k medida del rating ofensivo/defensivo (11,8 y 15,4).
 LAMBDA_POR_DEFECTO = 13.0
 
+# CUÁNTO SOBREVIVE UN EQUIPO A SU PROPIO VERANO. Medido sobre las 4 transiciones
+# de temporada × 30 equipos (120 pares), regresando el rating de la temporada
+# siguiente sobre el de la anterior:
+#
+#     ataque   ρ=+0,446 ± 0,074   pendiente 0,450
+#     defensa  ρ=+0,517 ± 0,067   pendiente 0,554
+#
+# La defensa se hereda más que el ataque, que es lo que cabía esperar: depende
+# más del sistema y menos de quién tenga la mano caliente. Las pendientes son lo
+# que se usa, NO las correlaciones: la pendiente es la predicción insesgada del
+# año siguiente, e incluye la regresión a la media que un equipo excepcional
+# sufre por serlo.
+PERSISTENCIA_ATAQUE = 0.450
+PERSISTENCIA_DEFENSA = 0.554
+
+# λ CONTRA EL PRIOR, y por qué es MAYOR que λ contra cero. λ = varianza dentro /
+# varianza entre equipos. Al encoger hacia cero, la varianza "entre" es toda la
+# dispersión de la liga (τ²). Al encoger hacia el prior, lo que queda por
+# explicar es solo τ²(1−ρ²), que es menor — y λ, que la lleva en el
+# denominador, sube. En otras palabras: un prior informativo merece MÁS peso
+# que la nada, no menos. Sale de los mismos ρ de arriba, no de una búsqueda.
+LAMBDA_PRIOR_ATAQUE = LAMBDA_POR_DEFECTO / (1 - 0.446**2)   # 16,2
+LAMBDA_PRIOR_DEFENSA = LAMBDA_POR_DEFECTO / (1 - 0.517**2)  # 17,7
+
 
 @dataclass(frozen=True)
 class RatingRow:
@@ -75,6 +99,51 @@ class TeamRating:
     @property
     def net(self) -> float:
         return self.offense + self.defense
+
+
+@dataclass(frozen=True)
+class SeasonPrior:
+    """Lo que se sabía de cada equipo ANTES de que la temporada empezara.
+
+    Sale de los ratings finales de la temporada anterior, ya multiplicados por
+    su persistencia. Es información legítima —está disponible antes del primer
+    salto inicial— y por eso no es fuga; lo que sí lo sería es usar los ratings
+    finales de la temporada EN CURSO, que es justo lo que `walk_forward` evita.
+    """
+
+    ratings: dict[int, tuple[float, float]]
+    """team_id -> (ataque, defensa), ya encogidos por la persistencia."""
+
+    league_mean: float
+    home_advantage: float
+
+    @classmethod
+    def from_model(cls, modelo: RatingModel) -> SeasonPrior:
+        return cls(
+            ratings={
+                t: (r.offense * PERSISTENCIA_ATAQUE, r.defense * PERSISTENCIA_DEFENSA)
+                for t, r in modelo.ratings.items()
+            },
+            league_mean=modelo.league_mean,
+            home_advantage=modelo.home_advantage,
+        )
+
+    def as_model(self) -> RatingModel:
+        """El prior solo, sin datos de la temporada nueva.
+
+        Es lo que se usa el primer día: mejor que no predecir nada, y muy
+        explícitamente peor que el ajuste con partidos ya jugados.
+        """
+        return RatingModel(
+            league_mean=self.league_mean,
+            home_advantage=self.home_advantage,
+            ratings={
+                t: TeamRating(team_id=t, offense=o, defense=d, games=0)
+                for t, (o, d) in self.ratings.items()
+            },
+            n_rows=0,
+            lam=LAMBDA_POR_DEFECTO,
+        )
 
 
 @dataclass(frozen=True)
@@ -110,9 +179,22 @@ class RatingModel:
 
 
 def fit_ratings(
-    rows: Sequence[RatingRow], *, lam: float = LAMBDA_POR_DEFECTO
+    rows: Sequence[RatingRow],
+    *,
+    lam: float = LAMBDA_POR_DEFECTO,
+    prior: SeasonPrior | None = None,
 ) -> RatingModel | None:
     """Ajusta ataque y defensa de cada equipo, ajustados por rival.
+
+    Con `prior`, las filas aumentadas dejan de empujar hacia cero y empujan
+    hacia lo que el equipo era el año pasado: `√λ·(coef − prior) = 0`, que es lo
+    mismo que poner `√λ·prior` en el término independiente. El cambio es de una
+    línea y lo que compra es grande — sin prior, un equipo no tiene rating hasta
+    su partido 20, y eso deja 1.246 partidos sin pronóstico.
+
+    Un equipo que NO esté en el prior (una expansión, o el primer año que hay
+    datos) sigue encogiendo hacia cero, que para él es lo correcto: la media de
+    la liga es todo lo que se sabe.
 
     Devuelve `None` si no hay filas suficientes: con menos observaciones que
     parámetros el sistema no está determinado, y devolver ratings inventados
@@ -121,7 +203,11 @@ def fit_ratings(
     if not rows:
         return None
 
-    equipos = sorted({r.team_id for r in rows} | {r.opponent_id for r in rows})
+    equipos = sorted(
+        {r.team_id for r in rows}
+        | {r.opponent_id for r in rows}
+        | (set(prior.ratings) if prior else set())
+    )
     if len(equipos) < 2:
         return None
 
@@ -152,12 +238,23 @@ def fit_ratings(
     # Regularización por filas aumentadas: √λ en cada columna de equipo, y NADA
     # en la media ni en la localía. Penalizar la media empujaría el nivel de
     # anotación de la liga hacia cero, que no tiene ningún sentido.
+    #
+    # El objetivo de cada fila aumentada es `√λ·prior` (cero si no hay prior),
+    # así que el ajuste minimiza λ·(coef − prior)² en vez de λ·coef².
     aumento = np.zeros((2 * n_equipos, n_col))
-    for j in range(2 * n_equipos):
-        aumento[j, j] = np.sqrt(lam)
+    objetivo = np.zeros(2 * n_equipos)
+    for t in equipos:
+        i_of, i_def = indice[t], n_equipos + indice[t]
+        p_of, p_def = (prior.ratings.get(t, (0.0, 0.0)) if prior else (0.0, 0.0))
+        lam_of = LAMBDA_PRIOR_ATAQUE if (prior and t in prior.ratings) else lam
+        lam_def = LAMBDA_PRIOR_DEFENSA if (prior and t in prior.ratings) else lam
+        aumento[i_of, i_of] = np.sqrt(lam_of)
+        aumento[i_def, i_def] = np.sqrt(lam_def)
+        objetivo[i_of] = np.sqrt(lam_of) * p_of
+        objetivo[i_def] = np.sqrt(lam_def) * p_def
 
     A = np.vstack([Xp, aumento])
-    b = np.concatenate([yp, np.zeros(2 * n_equipos)])
+    b = np.concatenate([yp, objetivo])
 
     coef, *_ = np.linalg.lstsq(A, b, rcond=None)
 

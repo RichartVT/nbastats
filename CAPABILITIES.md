@@ -363,14 +363,26 @@ Un modelo de ratings ajustados por rival, con probabilidad calibrada. Está en
 `/pronostico`, con el simulador, la tabla de fuerza y la validación en la misma
 pantalla — a propósito: quien mire una probabilidad tiene su calibración
 delante. Sobre
-**3.674 partidos fuera de muestra**, con los ratings reajustados por fecha y el
+**4.910 partidos fuera de muestra**, con los ratings reajustados por fecha y el
 modelo entrenado solo con temporadas anteriores:
 
 | Métrica | Modelo | Siempre local | Mejor récord |
 |---|---|---|---|
-| Acierto | **65,8 %** | 54,6 % | 64,6 % |
+| Acierto | **65,7 %** | 54,6 % | 63,4 % |
 | Brier | **0,213** | 0,248 | — |
-| Log-loss | **0,613** | 0,689 | — |
+| Log-loss | **0,615** | 0,689 | — |
+
+**Y el arranque de temporada, que es donde más aporta.** Cada temporada hereda lo
+que los equipos eran al cerrar la anterior, encogido por su persistencia medida
+(ataque 0,450, defensa 0,554), así que hay pronóstico desde el partido 1 y no
+desde el 20. En esos **1.236 partidos de arranque** el modelo acierta el 65,4 %
+contra el 59,8 % de "gana el de mejor récord": **+5,6 puntos porcentuales, con
+p = 6,6e-05**. Cuatro veces la ventaja que saca en temporada madura, porque en
+octubre un récord de 3-1 no dice nada.
+
+Ahí la calibración es peor y hay que decirlo: ECE 0,046 contra un suelo de ruido
+de 0,036, y pendiente 1,22 — el modelo **se queda corto de confianza** en el
+arranque. Es la dirección menos mala, pero es un desajuste real.
 
 **Lo que se puede prometer y lo que no.** La ganancia en precisión sobre "gana
 el de mejor récord" es de **+1,2 puntos porcentuales, con p=0,083**: real en el
@@ -392,7 +404,7 @@ Tres advertencias que acompañan a cualquier pronóstico:
   cortas, ajustes de serie y cero back-to-backs cambian el régimen, y con ~450
   partidos no hay muestra para un modelo propio.
 
-Y una que no es del modelo sino de la muestra: con ~367 partidos por tramo del
+Y una que no es del modelo sino de la muestra: con ~490 partidos por tramo del
 diagrama, no se puede detectar un desajuste de calibración menor de unos **4
 puntos porcentuales**. El ECE esperado bajo calibración perfecta no es cero; se
 publica siempre junto a su suelo de ruido.

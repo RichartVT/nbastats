@@ -37,11 +37,12 @@ Documentos hermanos:
 | 15 | Probabilidad y calibración | ✅ Completa — calibración dentro del ruido |
 | 16 | Ratings y pronóstico en pantalla | ✅ Completa — `/pronostico` |
 | 17 | Auditoría: el simulador ahora usa el modelo validado | ✅ Completa — coeficientes persistidos |
+| 18 | Prior entre temporadas | ✅ Completa — 4.910 partidos con pronóstico |
 
 **Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
 marcador por periodo · 1.030 jugadores con biografía completa · 5 temporadas
-(2021-22 → 2025-26) · 461 tests · 14 migraciones · **844 MB**.
+(2021-22 → 2025-26) · 467 tests · 14 migraciones · **844 MB**.
 
 ---
 
@@ -1287,6 +1288,92 @@ backtest siempre había usado el modelo bueno.
 
 ---
 
+## Fase 18 — Lo que un equipo se trae del verano
+
+Hasta aquí cada temporada empezaba de cero: con `MIN_PREVIOS = 20`, un equipo no
+tenía rating hasta su partido 20, y eso dejaba partidos enteros sin pronóstico.
+
+**Primero, la cifra correcta, porque la del plan estaba mal.** No son 2.466
+partidos sin predicción sino **2.928**, y son tres cosas distintas que conviene
+no mezclar:
+
+| Causa | Partidos | ¿Lo arregla el prior? |
+|---|---|---|
+| Toda la 2021-22 | 1.323 | **No** — no hay temporada anterior con la que entrenar |
+| Playoffs y play-in | 359 | **No** — excluidos a propósito; el modelo se calibró en regular |
+| Arranque de 2022-26 (<20 partidos) | **1.246** | **Sí** |
+
+### Cuánto sobrevive un equipo a su propio verano
+
+Medido sobre las 4 transiciones × 30 equipos (120 pares), regresando el rating
+de cada temporada sobre el de la anterior:
+
+| | ρ | pendiente | λ del prior |
+|---|---|---|---|
+| Ataque | +0,446 ± 0,074 | 0,450 | 16,2 |
+| Defensa | +0,517 ± 0,067 | 0,554 | 17,7 |
+| Neto | +0,542 ± 0,065 | 0,580 | — |
+
+**La defensa se hereda más que el ataque**, que es lo que cabía esperar: depende
+más del sistema y menos de quién tenga la mano caliente. Por eso el prior encoge
+cada componente por su propia pendiente y no los dos por la del neto.
+
+Se usan las **pendientes** y no las correlaciones: la pendiente es la predicción
+insesgada del año siguiente e incluye la regresión a la media que un equipo
+excepcional sufre por serlo.
+
+### Por qué λ del prior es MAYOR que λ contra cero
+
+Parece al revés y no lo es. λ = varianza dentro / varianza entre equipos. Al
+encoger hacia cero, lo que hay "entre" es toda la dispersión de la liga (τ²). Al
+encoger hacia el prior, lo que queda por explicar es solo τ²(1−ρ²), que es
+menor — y λ, que la lleva en el denominador, sube. Dicho en corto: **un prior
+informativo merece más peso que la nada.** Sale de los mismos ρ de la tabla, no
+de una búsqueda.
+
+La implementación es la que ya estaba: `fit_ratings` regulariza con filas
+aumentadas, y basta cambiar su término independiente de `0` a `√λ·prior` para
+que minimice `λ(coef − prior)²` en vez de `λ·coef²`. Un equipo que no esté en el
+prior —una expansión— sigue encogiendo hacia cero, que para él es lo correcto.
+
+### La prueba, fijada antes de mirar
+
+| Conjunto | n | Acierto | Brier | log-loss | Mejor récord |
+|---|---|---|---|---|---|
+| **Mismo subconjunto**, sin prior | 3.674 | 65,84 % | 0,2128 | 0,6132 | 64,67 % |
+| **Mismo subconjunto**, con prior | 3.674 | 65,81 % | 0,2128 | 0,6134 | 64,67 % |
+| Cobertura completa con prior | **4.910** | 65,70 % | 0,2133 | 0,6146 | 63,44 % |
+| **Solo los 1.236 nuevos** | 1.236 | **65,37 %** | 0,2146 | 0,6183 | **59,79 %** |
+
+**Sobre los partidos que ya se predecían, el prior no cambia nada** (−0,03 puntos
+porcentuales, Brier idéntico a la cuarta cifra). Era el requisito: no empeorar lo
+que funcionaba.
+
+**Donde sí cambia algo es donde antes no había nada.** En los 1.236 partidos del
+arranque, el modelo acierta el 65,37 % contra el 59,79 % de "gana el de mejor
+récord": **+5,6 puntos porcentuales, con p = 6,6e-05** por McNemar sobre 293
+pares discordantes (181 a 112). Cuatro veces la ventaja que saca en temporada
+madura, y esta vez sí concluyente — lo cual tiene un mecanismo evidente: en
+octubre un récord de 3-1 no dice nada, y el prior sí.
+
+**Una pega que hay que publicar:** en esos partidos nuevos la calibración es peor
+que en el resto. ECE 0,0455 contra un suelo de ruido de 0,0359, y pendiente 1,22.
+Una pendiente mayor que 1 significa **falta de confianza**: el modelo separa
+menos de lo que debería y sus extremos están comprimidos. Es la dirección menos
+mala de las dos, pero es un desajuste real y no ruido. Sobre el conjunto completo
+la calibración sigue dentro del ruido (ECE 0,0174, suelo 0,0180).
+
+### El test que protege esto
+
+`test_el_prior_no_ve_el_futuro` altera el resultado de los últimos 40 partidos y
+exige que **ni una sola variable de los partidos anteriores cambie**. Se comprobó
+que no es vacuo: introduciendo la fuga a propósito —usar los ratings finales de
+la propia temporada como prior— el test falla. Es la única forma de saber que un
+test de fuga sirve, porque la fuga no da error: sube las métricas y las deja
+mintiendo.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -1303,40 +1390,32 @@ publicar los resultados negativos (la curva de edad, el motor de resultado
 esperado) es un activo. Lo que hay no está mal construido; lo que sobra es
 **distancia entre lo construido y lo cableado**.
 
-Orden acordado para lo siguiente. Los puntos 1 a 4 **no cuestan una sola petición
+Orden acordado para lo siguiente. Los puntos 1 a 3 **no cuestan una sola petición
 a la NBA**:
 
-1. **Prior entre temporadas en los ratings.** Hoy cada temporada empieza de cero
-   y, con `MIN_PREVIOS = 20`, **2.466 partidos (el 40 %) no tienen predicción** —
-   no es que se prediga mal, es que no se predice. Medido sobre 120 pares
-   equipo-transición: correlación del neto entre temporadas **0,542 ± 0,065**,
-   pendiente 0,580. Son ~5 líneas: `fit_ratings` ya regulariza con filas
-   aumentadas hacia cero, basta aumentarlas hacia el prior. **Hay que medir por
-   separado** si mejora los partidos que ya se evaluaban o solo amplía la
-   cobertura; lo segundo ya justifica el cambio.
-2. **Índice de ausencias** — 24 puntos porcentuales de recorrido medidos, cero
+1. **Índice de ausencias** — 24 puntos porcentuales de recorrido medidos, cero
    peticiones. Va en explicación y en el simulador, **nunca en el backtest**: que
    un jugador no aparezca en el box score se sabe *después*, y meterlo sería
    fuga.
-3. **Cablear lo ya construido** — `/expected` con su desglose en la ficha de
+2. **Cablear lo ya construido** — `/expected` con su desglose en la ficha de
    partido y la tabla de `k` de `/stability`. Son 1.081 líneas con 93 tests
    escritos, probados e invisibles.
-4. **Deuda de mantenimiento, antes de que entre la 2026-27.** `daily` no
+3. **Deuda de mantenimiento, antes de que entre la 2026-27.** `daily` no
    actualiza `play_by_play`, `team_season_ratings` ni `game_predictions`: en
    cuanto empiece la temporada nueva, la aplicación servirá ratings viejos **como
    si fueran actuales**. Además: las 8 columnas de origen de los puntos no las
    lee nadie, `TEMPORADAS` está a mano en dos pantallas mientras `/catalog`
    existe justo para eso, no hay ruta 404, y sobran `polars`/`pyarrow`/`duckdb`/
    `httpx` y tres claves de configuración muertas.
-5. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
+4. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
    distancia**. Es la única vía con mecanismo real para rescatar el motor de
    resultado esperado, separando la *decisión* de tiro (estable, k=3) del
    *acierto* (ruido). Se propone con **la prueba fijada de antemano**, la misma
    que ya falló una vez: si a k=10 y k=20 no gana, se publica el negativo y se
    cierra la línea.
-6. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
+5. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
    `games_played` en la misma migración, que es la trampa anotada en la fase 10.
-7. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
+6. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
    pregunta más valiosa del proyecto: distinguir "está en declive" de "tiene 34
    años y le pasa lo que a todos".
 
