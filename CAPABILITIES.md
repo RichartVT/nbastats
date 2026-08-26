@@ -169,6 +169,23 @@ quién no jugó se sabe después del partido, y los minutos habituales se calcul
 con la temporada entera. Por eso no entra en el backtest y en el simulador
 aparece como ajuste separado del número calibrado.
 
+**De dónde salieron los puntos de un partido**
+manteniendo el volumen de tiro y sustituyendo solo el acierto por la norma del
+equipo, calculada **sin ese partido**. La suma de los componentes es exactamente
+la diferencia entre el margen real y el esperado —residuo 3,2e-14 sobre 400
+partidos por el camino del endpoint— así que se puede comprobar a mano.
+
+**No dice quién merecía ganar.** Se probó en la fase 13 y no sobrevivió: el
+margen esperado no predice la fuerza de un equipo mejor que el margen real. Y los
+componentes se compensan entre sí —quien tira mucho de tres genera menos rebote
+ofensivo—, así que una barra suelta no es un contrafactual.
+
+**Cuántos partidos hacen falta para creerse el dato de un equipo**
+la `k` de cada componente, medida descontando el ruido de muestreo. Conceder
+triples se estabiliza en **8 partidos**; que esos triples entren necesita **150**.
+De dónde salen los puntos —pintura, contraataque, tras pérdida, segunda
+oportunidad— resulta ser identidad y no ruido: entre k=6,9 y k=15,2.
+
 ## 2. Límite A — estructural: lo que NO se puede preguntar
 
 Todo lo de esta lista necesita **play-by-play o datos de tiro**, que hoy no

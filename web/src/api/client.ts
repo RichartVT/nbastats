@@ -1,4 +1,6 @@
 import type {
+  GameExpected,
+  StabilityTable,
   Backtest, Catalog, GameDetail, HeadToHead, LeadersResponse, Player, PlayerFilters,
   PlayerListResponse, PlayerRanks, PlayerSeason, RecentGame, SplitsResponse,
   Prediction, RatingsResponse, Standing, Team, TeamGame, TeamSplits, TeamSummary,
@@ -116,4 +118,9 @@ export const api = {
   // El id va como TEXTO: lleva ceros a la izquierda y codifica el tipo de
   // partido en la tercera posición.
   game: (gameId: string) => get<GameDetail>(`/games/${gameId}`),
+  gameExpected: (gameId: string) => get<GameExpected>(`/games/${gameId}/expected`),
+
+  // --- Qué se repite ---
+  stability: (season?: string) =>
+    get<StabilityTable>('/stability', season ? { season } : {}),
 }

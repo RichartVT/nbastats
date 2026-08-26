@@ -17,9 +17,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from nbastats.analysis.absences import describe_absences
+from nbastats.analysis.expected import (
+    ShootingNorms,
+    TeamBox,
+    attribute_margin,
+    four_factors,
+    shrunk_norm,
+)
 from nbastats.analysis.game_types import describe_game
 from nbastats.analysis.player_status import describe_status
-from nbastats.analysis.reliability import analyze_splits, benjamini_hochberg
+from nbastats.analysis.reliability import (
+    analyze_splits,
+    benjamini_hochberg,
+    reliability_for,
+)
+from nbastats.analysis.stability import K_HABILIDAD, K_MIXTO, variance_components
 from nbastats.analysis.trends import (
     MIN_GAMES_FOR_TREND,
     TrendDirection,
@@ -659,3 +671,262 @@ def leaders_trending(
         ),
         leaders=lideres[:limit],
     )
+
+
+# Cuántos intentos hacen falta para que el acierto propio de un equipo pese lo
+# mismo que el de la liga. Es la `k` de `stability.py` contada en intentos: el
+# acierto de 2 tiene k=16 partidos y un equipo tira ~60 dobles por partido, de
+# donde salen ~950; el triple es mucho más ruidoso (k=150) y su prior es
+# proporcionalmente mayor. Sin esto, un equipo de 20 triples lanzados tendría
+# una "norma" que es puro ruido.
+_PRIOR_INTENTOS = {"fg2": 950.0, "fg3": 1400.0, "ft": 400.0}
+
+
+@app.get("/games/{game_id}/expected", tags=["partido"])
+def get_game_expected(game_id: str, db: Session = Depends(get_db)) -> dict:
+    """De dónde salieron los puntos: volumen contra acierto.
+
+    QUÉ ES Y QUÉ NO ES. Es aritmética exacta: se mantiene el volumen de tiro
+    —cuántos triples se tiran y cuántos se conceden, que es decisión y se mide
+    como lo más estable del juego— y se sustituye solo el ACIERTO por la norma
+    del equipo. Cada término es lineal, así que la suma de los componentes ES la
+    diferencia entre el margen real y el esperado, sin residuo.
+
+    **No dice quién merecía ganar.** Esa afirmación se probó en la fase 13 y no
+    sobrevivió: el margen esperado no predice la fuerza de un equipo mejor que
+    el margen real, así que el veredicto no se publica. Lo que se publica es el
+    reparto, que sí es verificable a mano.
+
+    Y los componentes se cancelan entre sí —quien tira mucho de tres genera
+    menos rebote ofensivo—, así que una barra suelta NO es un contrafactual: no
+    se puede leer como "sin eso habrían ganado por 8".
+    """
+    datos = q.get_game_expected_inputs(db, game_id)
+    if not datos:
+        raise HTTPException(status_code=404, detail="Partido no encontrado")
+
+    liga = datos["league"]
+    normas_liga = ShootingNorms(
+        fg2_pct=_pct(liga["fgm"] - liga["fg3m"], liga["fga"] - liga["fg3a"]),
+        fg3_pct=_pct(liga["fg3m"], liga["fg3a"]),
+        ft_pct=_pct(liga["ftm"], liga["fta"]),
+        n_games=0,
+    )
+
+    def caja(tid: int) -> TeamBox:
+        b = datos["boxes"][tid]
+        return TeamBox(
+            pts=b["pts"], fgm=b["fgm"], fga=b["fga"], fg3m=b["fg3m"], fg3a=b["fg3a"],
+            ftm=b["ftm"], fta=b["fta"], oreb=b["oreb"], dreb=b["dreb"], tov=b["tov"],
+        )
+
+    def normas(tid: int) -> ShootingNorms:
+        """La norma del equipo, encogida hacia la liga por su fiabilidad."""
+        t = datos["season_totals"].get(tid)
+        if not t or not t["n_games"]:
+            return normas_liga
+        return ShootingNorms(
+            fg2_pct=shrunk_norm(
+                t["fgm"] - t["fg3m"], t["fga"] - t["fg3a"],
+                normas_liga.fg2_pct, _PRIOR_INTENTOS["fg2"],
+            ),
+            fg3_pct=shrunk_norm(
+                t["fg3m"], t["fg3a"], normas_liga.fg3_pct, _PRIOR_INTENTOS["fg3"]
+            ),
+            ft_pct=shrunk_norm(
+                t["ftm"], t["fta"], normas_liga.ft_pct, _PRIOR_INTENTOS["ft"]
+            ),
+            n_games=int(t["n_games"]),
+        )
+
+    local_id, visitante_id = datos["home_team_id"], datos["away_team_id"]
+    caja_local, caja_visitante = caja(local_id), caja(visitante_id)
+    n_local, n_visitante = normas(local_id), normas(visitante_id)
+
+    atr = attribute_margin(caja_local, n_local, caja_visitante, n_visitante)
+    ff_local = four_factors(caja_local, caja_visitante)
+    ff_visitante = four_factors(caja_visitante, caja_local)
+    # La norma sale de la temporada del equipo, así que su fiabilidad es la del
+    # equipo con menos partidos: una norma de 6 partidos y otra de 70 se
+    # escriben igual y no valen lo mismo.
+    n_norma = min(n_local.n_games, n_visitante.n_games)
+    fiab = reliability_for(n_norma)
+
+    def lado(tid: int, luck, norm: ShootingNorms, ff) -> dict:
+        b = datos["boxes"][tid]
+        return {
+            "team_id": tid,
+            "abbreviation": b["abbreviation"],
+            "full_name": b["full_name"],
+            "actual_points": luck.actual_points,
+            "expected_points": round(luck.expected_points, 2),
+            "luck_points": round(luck.total, 2),
+            "norms": {
+                "fg2_pct": round(norm.fg2_pct, 4),
+                "fg3_pct": round(norm.fg3_pct, 4),
+                "ft_pct": round(norm.ft_pct, 4),
+                "n_games": norm.n_games,
+            },
+            "four_factors": {
+                "efg_pct": _redondea(ff.efg_pct, 4),
+                "tov_rate": _redondea(ff.tov_rate, 4),
+                "oreb_pct": _redondea(ff.oreb_pct, 4),
+                "ft_rate": _redondea(ff.ft_rate, 4),
+                "possessions": round(ff.possessions, 1),
+            },
+        }
+
+    return {
+        "game_id": game_id,
+        "season_id": datos["season_id"],
+        "actual_margin": atr.actual_margin,
+        "expected_margin": round(atr.expected_margin, 2),
+        "swing": round(atr.swing, 2),
+        # Debe ser 0. Se devuelve para que un fallo de atribución no viva en
+        # silencio: si algún día no es 0, el desglose dejó de cerrar.
+        "unexplained_pts": round(atr.unexplained_pts, 10),
+        "components": [
+            {"key": c.key, "label": c.label, "points": round(c.points, 2), "detail": c.detail}
+            for c in atr.components
+        ],
+        "home": lado(local_id, atr.home, n_local, ff_local),
+        "away": lado(visitante_id, atr.away, n_visitante, ff_visitante),
+        "reliability": {"level": fiab.value, "n_games": n_norma},
+        "note": (
+            "Se mantiene el volumen de tiro y se sustituye solo el acierto por la "
+            "norma del equipo, calculada SIN este partido. La suma de los "
+            "componentes es exactamente la diferencia entre el margen real y el "
+            "esperado. NO dice quién merecía ganar: esa afirmación se probó y no "
+            "sobrevivió. Y los componentes se compensan entre sí, así que una "
+            "barra suelta no es un contrafactual."
+        ),
+    }
+
+
+def _pct(hechos: int | None, intentos: int | None) -> float:
+    return (hechos or 0) / intentos if intentos else 0.0
+
+
+def _redondea(v: float | None, n: int) -> float | None:
+    return None if v is None else round(v, n)
+
+
+# Qué se descompone, y cómo se calcula cada cosa por partido.
+#
+# EL PAR QUE JUSTIFICA TODA LA TABLA: "triples que concedes" contra "que esos
+# triples entren". El primero es decisión tuya y se estabiliza enseguida; el
+# segundo es la noche. Sin medirlo, cualquiera podría afirmar lo contrario con
+# la misma seguridad.
+_COMPONENTES: dict[str, tuple[str, str]] = {
+    "fg3a": ("Triples que tiras", "volumen"),
+    "opp_fg3a": ("Triples que concedes", "volumen"),
+    "fg3_pct": ("Acierto en triples", "acierto"),
+    "opp_fg3_pct": ("Acierto en los triples que concedes", "acierto"),
+    "efg_pct": ("eFG% propio", "acierto"),
+    "opp_efg_pct": ("eFG% concedido", "acierto"),
+    "tov_rate": ("Pérdidas por posesión", "control"),
+    "oreb_pct": ("% de rebote ofensivo", "control"),
+    "ft_rate": ("Tiros libres por tiro de campo", "control"),
+    "pace": ("Ritmo", "control"),
+    "pts_paint": ("Puntos en la pintura", "origen"),
+    "pts_fastbreak": ("Puntos de contraataque", "origen"),
+    "pts_off_turnovers": ("Puntos tras pérdida", "origen"),
+    "pts_2nd_chance": ("Puntos de segunda oportunidad", "origen"),
+}
+
+
+def _valor(f: dict, clave: str) -> float | None:
+    """Un componente de una fila equipo-partido. `None` si no se puede calcular."""
+    def div(a, b):
+        a, b = (a or 0), (b or 0)
+        return a / b if b else None
+
+    if clave == "fg3_pct":
+        return div(f["fg3m"], f["fg3a"])
+    if clave == "opp_fg3_pct":
+        return div(f["opp_fg3m"], f["opp_fg3a"])
+    if clave == "efg_pct":
+        fga = f["fga"] or 0
+        return ((f["fgm"] or 0) + 0.5 * (f["fg3m"] or 0)) / fga if fga else None
+    if clave == "opp_efg_pct":
+        fga = f["opp_fga"] or 0
+        return ((f["opp_fgm"] or 0) + 0.5 * (f["opp_fg3m"] or 0)) / fga if fga else None
+    if clave == "tov_rate":
+        poss = (f["fga"] or 0) - (f["oreb"] or 0) + (f["tov"] or 0) + 0.44 * (f["fta"] or 0)
+        return div(f["tov"], poss)
+    if clave == "oreb_pct":
+        return div(f["oreb"], (f["oreb"] or 0) + (f["opp_dreb"] or 0))
+    if clave == "ft_rate":
+        return div(f["fta"], f["fga"])
+    v = f.get(clave)
+    return None if v is None else float(v)
+
+
+@app.get("/stability", tags=["análisis"])
+def get_stability(
+    season: str | None = Query(None, description="Vacío = todas las cargadas"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Cuántos partidos hacen falta para creerse el dato de un equipo.
+
+    `k` es el número de partidos en que la media propia de un equipo pasa a
+    pesar la mitad, y la otra mitad se la lleva la liga. Sale de descomponer la
+    varianza —cuánta diferencia REAL hay entre equipos, una vez descontado el
+    ruido de muestreo— con el mismo método de los momentos que sostiene el
+    encogimiento de los splits.
+
+    Es la tabla que decide qué es habilidad y qué es la noche, y de la que
+    depende el motor de resultado esperado: por eso se publica en vez de quedar
+    como constante escondida. El plan original DABA POR SENTADO qué componentes
+    eran suerte; esto lo mide.
+    """
+    filas = q.get_team_game_series(db, season)
+    if not filas:
+        raise HTTPException(status_code=404, detail="Sin datos para esa temporada")
+
+    salida = []
+    for clave, (etiqueta, familia) in _COMPONENTES.items():
+        grupos: dict[str, list[float]] = {}
+        for f in filas:
+            v = _valor(f, clave)
+            if v is not None:
+                grupos.setdefault(f"{f['team_id']}|{f['season_id']}", []).append(v)
+        grupos = {u: vs for u, vs in grupos.items() if len(vs) >= 2}
+        if len(grupos) < 2:
+            continue
+        vc = variance_components(grupos, label=etiqueta)
+        salida.append(
+            {
+                "key": clave,
+                "label": etiqueta,
+                "family": familia,
+                "k_games": None if vc.k_games is None else round(vc.k_games, 1),
+                "stability": vc.stability.key,
+                "stability_label": vc.stability.label,
+                "note": vc.stability.note,
+                "reliability": vc.reliability.value,
+                "n_units": vc.n_units,
+                "mean_games": round(vc.mean_n, 1),
+                "tau_squared": vc.tau_squared,
+                "within_var": vc.within_var,
+                # Peso que merece la media propia con media temporada y con una
+                # entera: es la lectura práctica de `k`.
+                "weight_41": round(vc.weight(41), 3),
+                "weight_82": round(vc.weight(82), 3),
+            }
+        )
+
+    # De lo más estable a lo más ruidoso. `k=None` (sin señal detectable) al
+    # final: no es "muy estable", es "no se distingue nada".
+    salida.sort(key=lambda x: (x["k_games"] is None, x["k_games"] or 0))
+    return {
+        "season": season,
+        "components": salida,
+        "boundaries": {"skill_max_k": K_HABILIDAD, "mixed_max_k": K_MIXTO},
+        "note": (
+            "k = partidos para que la media propia de un equipo pese la mitad. "
+            "Por debajo de 41 (media temporada) es habilidad; por encima de 82 "
+            "(temporada entera) es sobre todo azar. Se mide descontando el ruido "
+            "de muestreo, no comparando dispersiones en bruto."
+        ),
+    }

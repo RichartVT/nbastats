@@ -39,11 +39,12 @@ Documentos hermanos:
 | 17 | Auditoría: el simulador ahora usa el modelo validado | ✅ Completa — coeficientes persistidos |
 | 18 | Prior entre temporadas + triples, historial y escudos | ✅ Completa — 4.910 partidos con pronóstico |
 | 19 | Índice de ausencias | ✅ Completa — 21,4 pp de recorrido, 13.204/13.204 |
+| 20 | `/expected` y `/stability` en pantalla | ✅ Completa — residuo 3,2e-14 |
 
 **Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
 marcador por periodo · 1.030 jugadores con biografía completa · 5 temporadas
-(2021-22 → 2025-26) · 482 tests · 15 migraciones · **844 MB**.
+(2021-22 → 2025-26) · 492 tests · 15 migraciones · **844 MB**.
 
 ---
 
@@ -1500,6 +1501,90 @@ en que se reserva a todo el mundo. El índice los detecta bien, pero el tramo de
 
 ---
 
+## Fase 20 — Cablear lo que ya estaba construido
+
+1.081 líneas de análisis con 93 tests que ningún endpoint exponía. No hacía
+falta escribir motores: hacía falta enchufarlos.
+
+### `/games/{id}/expected` — de dónde salieron los puntos
+
+El desglose que la fase 13 dejó escrito y sin pantalla. Se mantiene el volumen de
+tiro y se sustituye solo el **acierto** por la norma del equipo; cada término es
+lineal, así que la suma de componentes **es** la diferencia entre el margen real
+y el esperado.
+
+**Leave-one-out, y no es un detalle.** La norma de un equipo se calcula sin el
+partido que se está explicando. Si lo incluyera, el partido se explicaría en
+parte a sí mismo y la "suerte" saldría sesgada hacia cero — y además es la
+condición con la que se verificó el motor en su día, así que el endpoint tenía
+que respetarla o estaría midiendo otra cosa. Se resuelve con un `FILTER (WHERE
+game_id <> :gid)`, que es exacto y no cuesta nada.
+
+**Normas por equipo, encogidas hacia la liga.** Un equipo que tira el 39 % de
+tres toda la temporada no "debía" tirar el 36 % de la liga. El encogimiento usa
+`shrunk_norm` con priors en intentos derivados de las `k` medidas: el triple es
+mucho más ruidoso que el doble (k=150 contra k=16), así que su media propia
+necesita más intentos para ganarse el mismo peso.
+
+Verificado sobre 400 partidos al azar por el camino completo del endpoint:
+**peor residuo 3,2e-14**, que es aritmética de coma flotante y no un error.
+
+**Lo que NO publica.** El veredicto "debió ganar". La fase 13 lo probó y no
+sobrevivió —el margen esperado no predice la fuerza de un equipo mejor que el
+margen real— así que la pantalla dice de dónde salieron los puntos y cuánto pesó
+cada factor, **sin decidir quién merecía ganar**. `MarginAttribution.flipped`
+existe en el módulo y deliberadamente **no se expone**.
+
+### `/stability` y la pantalla "Qué se repite"
+
+La tabla que decide qué es habilidad y qué es la noche, y de la que depende el
+motor anterior. Sobre las cinco temporadas:
+
+| Componente | k | Clase |
+|---|---|---|
+| Triples que **tiras** | 3,0 | Habilidad |
+| Ritmo | 5,3 | Habilidad |
+| Puntos en la pintura | 6,9 | Habilidad |
+| % de rebote ofensivo | 7,4 | Habilidad |
+| Triples que **concedes** | 8,1 | Habilidad |
+| Puntos de contraataque | 8,5 | Habilidad |
+| Puntos de segunda oportunidad | 12,5 | Habilidad |
+| eFG% propio | 14,2 | Habilidad |
+| Pérdidas por posesión | 15,2 | Habilidad |
+| Puntos tras pérdida | 15,2 | Habilidad |
+| Tiros libres por tiro de campo | 17,3 | Habilidad |
+| eFG% concedido | 24,8 | Habilidad |
+| **Acierto en triples** | **47,0** | Mixto |
+| **Acierto en los triples que concedes** | **150,5** | Sobre todo azar |
+
+Las dos últimas filas contra la quinta son la idea entera: **conceder triples se
+estabiliza en 8 partidos y que entren necesita 150.** Son la misma jugada vista
+desde los dos lados, y por eso el motor de resultado esperado mantiene el volumen
+y sustituye el acierto. Ya estaba en el docstring del módulo; ahora se puede
+comprobar en pantalla y por temporada.
+
+**Y las ocho columnas huérfanas dejan de serlo.** La auditoría anotó que los
+puntos en la pintura, de contraataque, tras pérdida y de segunda oportunidad se
+ingerían, se migraban, `status` los contaba y no los leía nadie. Aquí se usan, y
+dan un resultado que no era obvio: **de dónde salen los puntos de un equipo es
+identidad, no ruido** — los cuatro caen entre k=6,9 y k=15,2.
+
+La consulta lee de `team_game_stats` y no de `mv_team_game_rates` porque la vista
+sigue sin exponer esas columnas. Queda anotado como deuda, no resuelto.
+
+Lo concedido sale de la fila del **rival** en el mismo partido y no de columnas
+`opp_*`, para poder separar el volumen concedido del acierto concedido — que es
+justo la distinción que hace falta.
+
+### De paso
+
+`Marcador` estaba definido **dentro** del render de `GamePage`. React lo trataba
+como un tipo de componente nuevo en cada render y desmontaba el subárbol entero.
+Era la única de las seis advertencias de oxlint con consecuencia real, y estaba
+anotada en la auditoría. Sacado fuera.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -1516,28 +1601,24 @@ publicar los resultados negativos (la curva de edad, el motor de resultado
 esperado) es un activo. Lo que hay no está mal construido; lo que sobra es
 **distancia entre lo construido y lo cableado**.
 
-Orden acordado para lo siguiente. Los puntos 1 y 2 **no cuestan una sola petición
-a la NBA**:
+Orden acordado para lo siguiente. El punto 1 **no cuesta una sola petición a la NBA**:
 
-1. **Cablear lo ya construido** — `/expected` con su desglose en la ficha de
-   partido y la tabla de `k` de `/stability`. Son 1.081 líneas con 93 tests
-   escritos, probados e invisibles.
-2. **Deuda de mantenimiento, antes de que entre la 2026-27.** `daily` no
+1. **Deuda de mantenimiento, antes de que entre la 2026-27.** `daily` no
    actualiza `play_by_play`, `team_season_ratings` ni `game_predictions`: en
    cuanto empiece la temporada nueva, la aplicación servirá ratings viejos **como
    si fueran actuales**. Además: las 8 columnas de origen de los puntos no las
    lee nadie, `TEMPORADAS` está a mano en dos pantallas mientras `/catalog`
    existe justo para eso, no hay ruta 404, y sobran `polars`/`pyarrow`/`duckdb`/
    `httpx` y tres claves de configuración muertas.
-3. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
+2. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
    distancia**. Es la única vía con mecanismo real para rescatar el motor de
    resultado esperado, separando la *decisión* de tiro (estable, k=3) del
    *acierto* (ruido). Se propone con **la prueba fijada de antemano**, la misma
    que ya falló una vez: si a k=10 y k=20 no gana, se publica el negativo y se
    cierra la línea.
-4. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
+3. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
    `games_played` en la misma migración, que es la trampa anotada en la fase 10.
-5. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
+4. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
    pregunta más valiosa del proyecto: distinguir "está en declive" de "tiene 34
    años y le pasa lo que a todos".
 

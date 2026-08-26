@@ -341,6 +341,173 @@ function BoxScore({
   )
 }
 
+/**
+ * De dónde salieron los puntos: volumen contra acierto.
+ *
+ * NO dice quién merecía ganar. Esa afirmación se probó en la fase 13 y no
+ * sobrevivió a su prueba, así que aquí solo va el reparto — que sí es exacto y
+ * verificable a mano.
+ */
+function ResultadoEsperado({ gameId }: { gameId: string }) {
+  const e = useQuery({
+    queryKey: ['expected', gameId],
+    queryFn: () => api.gameExpected(gameId),
+  })
+  if (!e.data) return null
+  const d = e.data
+  const max = Math.max(...d.components.map((c) => Math.abs(c.points)), 1)
+
+  return (
+    <Card
+      title="De dónde salieron los puntos"
+      subtitle={`Margen real ${fmtSigned(d.actual_margin, 0)} · esperado ${fmtSigned(
+        d.expected_margin,
+        1,
+      )} con el acierto normal de cada equipo · la noche movió ${fmtSigned(d.swing, 1)}`}
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <tbody>
+            {[...d.components]
+              .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
+              .map((c) => (
+                <tr key={c.key} style={{ borderTop: '1px solid var(--border)' }}>
+                  <td className="py-2 pr-3">{c.label}</td>
+                  <td
+                    className="tabular w-20 py-2 pr-3 text-right font-medium"
+                    style={{
+                      color:
+                        c.points > 0 ? 'var(--status-good)' : 'var(--status-critical)',
+                    }}
+                  >
+                    {fmtSigned(c.points, 2)}
+                  </td>
+                  <td className="w-40 py-2 pr-3">
+                    <span className="relative inline-block h-2 w-full align-middle">
+                      <span
+                        className="absolute top-0 h-2"
+                        style={{
+                          left:
+                            c.points >= 0
+                              ? '50%'
+                              : `${50 - (Math.abs(c.points) / max) * 50}%`,
+                          width: `${(Math.abs(c.points) / max) * 50}%`,
+                          background:
+                            c.points > 0 ? 'var(--status-good)' : 'var(--status-critical)',
+                          borderRadius: 2,
+                        }}
+                      />
+                      <span
+                        className="absolute top-0 h-2"
+                        style={{ left: '50%', width: 1, background: 'var(--border)' }}
+                      />
+                    </span>
+                  </td>
+                  <td className="py-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {c.detail}
+                  </td>
+                </tr>
+              ))}
+            <tr style={{ borderTop: '2px solid var(--border)' }}>
+              <td className="py-2 pr-3 font-medium">Suma</td>
+              <td className="tabular w-20 py-2 pr-3 text-right font-medium">
+                {fmtSigned(d.swing, 2)}
+              </td>
+              <td colSpan={2} className="py-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                Cierra exacto por construcción: al mantener el volumen fijo cada término es
+                lineal, así que no hay residuo que repartir
+                {d.unexplained_pts !== 0 && ` (sin explicar: ${d.unexplained_pts})`}.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+        Positivo = empujó el marcador hacia {d.home.abbreviation}, sea mérito de quien sea. Las
+        normas de tiro son las de cada equipo esta temporada <strong>sin contar este partido</strong>{' '}
+        ({d.home.abbreviation} {(100 * d.home.norms.fg3_pct).toFixed(1)}% de tres,{' '}
+        {d.away.abbreviation} {(100 * d.away.norms.fg3_pct).toFixed(1)}%). {d.note}
+      </p>
+    </Card>
+  )
+}
+
+/**
+ * Un equipo en la cabecera, con su escudo y su marcador.
+ *
+ * Vive FUERA del render a propósito: definido dentro, React lo trata como un
+ * tipo de componente nuevo en cada render y desmonta y remonta el subárbol
+ * entero, perdiendo su estado. Es la advertencia de oxlint con consecuencia
+ * real, no de estilo.
+ */
+function Marcador({ t, ganador }: { t: TeamBoxScore; ganador: boolean }) {
+  return (
+  <Link
+    to={`/equipo/${t.team_id}`}
+    className="flex flex-1 items-center gap-3 hover:underline"
+    style={{ color: 'var(--text-primary)' }}
+  >
+    <TeamLogo teamId={t.team_id} name={t.full_name} size={48} />
+    <div className="min-w-0">
+      <div className="truncate font-medium">{t.full_name}</div>
+      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+        {/* El récord con el que LLEGABA, sin contar este partido. Es lo que
+            convierte un resultado en una historia: "ganó por 20" dice poco;
+            "el 9-11 ganó por 20 al 13-7" lo dice todo. */}
+        {t.wins_before !== null && t.losses_before !== null && (
+          <span title="Récord antes de este partido">
+            {t.wins_before}-{t.losses_before}
+            {' · '}
+          </span>
+        )}
+        {t.is_home ? 'Local' : 'Visitante'}
+        {t.is_back_to_back && ' · 2º en 2 días'}
+        {t.rest_days !== null &&
+          t.rest_days > 0 &&
+          ` · ${t.rest_days} ${t.rest_days === 1 ? 'día' : 'días'} de descanso`}
+      </div>
+      {t.absences && t.absences.players > 0 && (
+        <div
+          className="mt-1 text-xs"
+          title={t.absences.absent
+            .map((a) => `${a.full_name} (${a.usual_minutes} min)`)
+            .join('\n')}
+          style={{
+            color:
+              t.absences.level === 'grave'
+                ? 'var(--status-critical)'
+                : t.absences.level === 'notable'
+                  ? 'var(--status-warning)'
+                  : 'var(--text-muted)',
+          }}
+        >
+          {t.absences.label}: {t.absences.players}{' '}
+          {t.absences.players === 1 ? 'ausente' : 'ausentes'} ·{' '}
+          {Math.round(t.absences.minutes)} min habituales
+          {t.absences.absent.length > 0 && (
+            <span style={{ color: 'var(--text-muted)' }}>
+              {' — '}
+              {t.absences.absent
+                .slice(0, 3)
+                .map((a) => a.full_name)
+                .join(', ')}
+              {t.absences.absent.length > 3 && ` y ${t.absences.absent.length - 3} más`}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+    <div
+      className="ml-auto text-3xl font-semibold"
+      style={{ color: ganador ? 'var(--text-primary)' : 'var(--text-muted)' }}
+    >
+      {t.pts}
+    </div>
+  </Link>
+  )
+}
+
 export function GamePage() {
   const { id } = useParams()
   const [vista, setVista] = useState<Vista>('basicas')
@@ -375,70 +542,6 @@ export function GamePage() {
   }))
   const hayCuartos = periodos.length > 0
 
-  const Marcador = ({ t, ganador }: { t: TeamBoxScore; ganador: boolean }) => (
-    <Link
-      to={`/equipo/${t.team_id}`}
-      className="flex flex-1 items-center gap-3 hover:underline"
-      style={{ color: 'var(--text-primary)' }}
-    >
-      <TeamLogo teamId={t.team_id} name={t.full_name} size={48} />
-      <div className="min-w-0">
-        <div className="truncate font-medium">{t.full_name}</div>
-        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-          {/* El récord con el que LLEGABA, sin contar este partido. Es lo que
-              convierte un resultado en una historia: "ganó por 20" dice poco;
-              "el 9-11 ganó por 20 al 13-7" lo dice todo. */}
-          {t.wins_before !== null && t.losses_before !== null && (
-            <span title="Récord antes de este partido">
-              {t.wins_before}-{t.losses_before}
-              {' · '}
-            </span>
-          )}
-          {t.is_home ? 'Local' : 'Visitante'}
-          {t.is_back_to_back && ' · 2º en 2 días'}
-          {t.rest_days !== null &&
-            t.rest_days > 0 &&
-            ` · ${t.rest_days} ${t.rest_days === 1 ? 'día' : 'días'} de descanso`}
-        </div>
-        {t.absences && t.absences.players > 0 && (
-          <div
-            className="mt-1 text-xs"
-            title={t.absences.absent
-              .map((a) => `${a.full_name} (${a.usual_minutes} min)`)
-              .join('\n')}
-            style={{
-              color:
-                t.absences.level === 'grave'
-                  ? 'var(--status-critical)'
-                  : t.absences.level === 'notable'
-                    ? 'var(--status-warning)'
-                    : 'var(--text-muted)',
-            }}
-          >
-            {t.absences.label}: {t.absences.players}{' '}
-            {t.absences.players === 1 ? 'ausente' : 'ausentes'} ·{' '}
-            {Math.round(t.absences.minutes)} min habituales
-            {t.absences.absent.length > 0 && (
-              <span style={{ color: 'var(--text-muted)' }}>
-                {' — '}
-                {t.absences.absent
-                  .slice(0, 3)
-                  .map((a) => a.full_name)
-                  .join(', ')}
-                {t.absences.absent.length > 3 && ` y ${t.absences.absent.length - 3} más`}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-      <div
-        className="ml-auto text-3xl font-semibold"
-        style={{ color: ganador ? 'var(--text-primary)' : 'var(--text-muted)' }}
-      >
-        {t.pts}
-      </div>
-    </Link>
-  )
 
   return (
     <div className="space-y-6">
@@ -598,6 +701,8 @@ export function GamePage() {
           )}
         </div>
       </div>
+
+      <ResultadoEsperado gameId={data.game_id} />
 
       {[visitante, local].map((t) => (
         <Card

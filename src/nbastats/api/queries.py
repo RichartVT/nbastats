@@ -966,3 +966,131 @@ def get_game_absences(session: Session, game_id: str) -> dict[int, list[dict]]:
             }
         )
     return salida
+
+
+def get_game_expected_inputs(session: Session, game_id: str) -> dict | None:
+    """Box scores del partido y totales de temporada de cada equipo SIN él.
+
+    LEAVE-ONE-OUT, y no es un detalle. Si la norma de tiro de un equipo incluye
+    el partido que se está explicando, el partido se explica en parte a sí mismo
+    y la "suerte" sale sesgada hacia cero. Es la misma condición con la que se
+    verificó el motor sobre los 6.150 partidos (residuo 0,000000000000), así que
+    el endpoint tiene que respetarla o estaría midiendo otra cosa.
+    """
+    cab = (
+        session.execute(
+            text("""
+                SELECT g.game_id, g.season_id, g.season_type::text AS season_type,
+                       g.home_team_id, g.away_team_id
+                FROM games g WHERE g.game_id = :gid
+            """),
+            {"gid": game_id},
+        )
+        .mappings()
+        .first()
+    )
+    if not cab:
+        return None
+
+    partido = {
+        f["team_id"]: dict(f)
+        for f in session.execute(
+            text("""
+                SELECT tgs.team_id, t.abbreviation, t.full_name, tgs.is_home,
+                       tgs.pts, tgs.fgm, tgs.fga, tgs.fg3m, tgs.fg3a,
+                       tgs.ftm, tgs.fta, tgs.oreb, tgs.dreb, tgs.tov
+                FROM team_game_stats tgs
+                JOIN teams t ON t.team_id = tgs.team_id
+                WHERE tgs.game_id = :gid
+            """),
+            {"gid": game_id},
+        ).mappings()
+    }
+    if len(partido) != 2:
+        return None
+
+    # Totales de la temporada MENOS este partido. El `FILTER` es lo que lo
+    # consigue, y es exacto: no aproxima restando promedios.
+    SIN_ESTE = """
+        COUNT(*)      FILTER (WHERE tgs.game_id <> :gid) AS n_games,
+        SUM(tgs.fgm)  FILTER (WHERE tgs.game_id <> :gid) AS fgm,
+        SUM(tgs.fga)  FILTER (WHERE tgs.game_id <> :gid) AS fga,
+        SUM(tgs.fg3m) FILTER (WHERE tgs.game_id <> :gid) AS fg3m,
+        SUM(tgs.fg3a) FILTER (WHERE tgs.game_id <> :gid) AS fg3a,
+        SUM(tgs.ftm)  FILTER (WHERE tgs.game_id <> :gid) AS ftm,
+        SUM(tgs.fta)  FILTER (WHERE tgs.game_id <> :gid) AS fta
+    """
+    args = {
+        "gid": game_id,
+        "season": cab["season_id"],
+        "tipo": cab["season_type"],
+        "local": cab["home_team_id"],
+        "visitante": cab["away_team_id"],
+    }
+    temporada = {
+        f["team_id"]: dict(f)
+        for f in session.execute(
+            text(f"""
+                SELECT tgs.team_id, {SIN_ESTE}
+                FROM team_game_stats tgs
+                JOIN games g2 ON g2.game_id = tgs.game_id
+                WHERE g2.season_id = :season AND g2.season_type = :tipo
+                  AND tgs.team_id IN (:local, :visitante)
+                GROUP BY tgs.team_id
+            """),
+            args,
+        ).mappings()
+    }
+    liga = (
+        session.execute(
+            text(f"""
+                SELECT {SIN_ESTE}
+                FROM team_game_stats tgs
+                JOIN games g2 ON g2.game_id = tgs.game_id
+                WHERE g2.season_id = :season AND g2.season_type = :tipo
+            """),
+            args,
+        )
+        .mappings()
+        .one()
+    )
+
+    return {
+        "season_id": cab["season_id"],
+        "home_team_id": cab["home_team_id"],
+        "away_team_id": cab["away_team_id"],
+        "boxes": partido,
+        "season_totals": temporada,
+        "league": dict(liga),
+    }
+
+
+def get_team_game_series(session: Session, season: str | None = None) -> list[dict]:
+    """Una fila por equipo-partido con los componentes que se quieren estabilizar.
+
+    Lee de `team_game_stats` y no de `mv_team_game_rates` porque la vista no
+    expone las ocho columnas de origen de los puntos. Está anotado como deuda;
+    mientras tanto, la fuente base las tiene todas.
+
+    Lo concedido sale de la fila del RIVAL en el mismo partido, no de columnas
+    `opp_*`: así el volumen concedido (cuántos triples le dejas tirar) y el
+    acierto concedido (si entran) quedan separados, que es justamente lo que el
+    motor de resultado esperado necesita distinguir.
+    """
+    sql = text("""
+        SELECT t.team_id, g.season_id,
+               t.fga, t.fgm, t.fg3a, t.fg3m, t.fta, t.ftm,
+               t.oreb, t.dreb, t.tov, t.pace,
+               t.pts_paint, t.pts_fastbreak, t.pts_off_turnovers, t.pts_2nd_chance,
+               o.fga AS opp_fga, o.fgm AS opp_fgm, o.fg3a AS opp_fg3a,
+               o.fg3m AS opp_fg3m, o.dreb AS opp_dreb
+        FROM team_game_stats t
+        JOIN games g ON g.game_id = t.game_id
+        JOIN team_game_stats o
+          ON o.game_id = t.game_id AND o.team_id = t.opponent_team_id
+        WHERE g.season_type = 'regular'
+          -- El cast es necesario: sin él Postgres no puede inferir el tipo
+          -- del parámetro dentro de un `IS NULL`.
+          AND (CAST(:season AS text) IS NULL OR g.season_id = CAST(:season AS text))
+    """)
+    return [dict(f) for f in session.execute(sql, {"season": season}).mappings()]

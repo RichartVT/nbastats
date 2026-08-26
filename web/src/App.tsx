@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { ComparePage } from './pages/ComparePage'
+import { StabilityPage } from './pages/StabilityPage'
 import { ForecastPage } from './pages/ForecastPage'
 import { GamePage } from './pages/GamePage'
 import { LeadersPage } from './pages/LeadersPage'
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/comparar" element={<ComparePage />} />
             <Route path="/tendencias" element={<LeadersPage />} />
             <Route path="/pronostico" element={<ForecastPage />} />
+            <Route path="/que-se-repite" element={<StabilityPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

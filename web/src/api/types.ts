@@ -698,3 +698,71 @@ export interface Backtest {
   disagreements: number
   caveat: string
 }
+
+
+// --- Resultado esperado y estabilidad ---
+
+export interface LuckComponent {
+  key: string
+  label: string
+  /** Positivo = empujó el marcador hacia el LOCAL, sea mérito de quien sea. */
+  points: number
+  detail: string
+}
+
+export interface ExpectedSide {
+  team_id: number
+  abbreviation: string
+  full_name: string
+  actual_points: number
+  expected_points: number
+  luck_points: number
+  norms: { fg2_pct: number; fg3_pct: number; ft_pct: number; n_games: number }
+  four_factors: {
+    efg_pct: number | null
+    tov_rate: number | null
+    oreb_pct: number | null
+    ft_rate: number | null
+    possessions: number
+  }
+}
+
+export interface GameExpected {
+  game_id: string
+  season_id: string
+  actual_margin: number
+  expected_margin: number
+  swing: number
+  /** Tiene que ser 0. Se expone para que un fallo de atribución no viva callado. */
+  unexplained_pts: number
+  components: LuckComponent[]
+  home: ExpectedSide
+  away: ExpectedSide
+  reliability: { level: string; n_games: number }
+  note: string
+}
+
+export interface StabilityComponent {
+  key: string
+  label: string
+  family: string
+  /** Partidos para que la media propia pese la mitad. `null` = sin señal. */
+  k_games: number | null
+  stability: 'habilidad' | 'mixto' | 'suerte' | 'indistinguible'
+  stability_label: string
+  note: string
+  reliability: string
+  n_units: number
+  mean_games: number
+  tau_squared: number
+  within_var: number
+  weight_41: number
+  weight_82: number
+}
+
+export interface StabilityTable {
+  season: string | null
+  components: StabilityComponent[]
+  boundaries: { skill_max_k: number; mixed_max_k: number }
+  note: string
+}

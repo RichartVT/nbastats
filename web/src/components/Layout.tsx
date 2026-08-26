@@ -7,6 +7,7 @@ const enlaces = [
   { to: '/comparar', label: 'Comparar' },
   { to: '/tendencias', label: 'Al alza y en declive' },
   { to: '/pronostico', label: 'Fuerza y pronóstico' },
+  { to: '/que-se-repite', label: 'Qué se repite' },
 ]
 
 export function Layout() {
