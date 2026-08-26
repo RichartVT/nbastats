@@ -357,7 +357,46 @@ se expone lo que no aguanta, y el motivo queda escrito.
 
 ---
 
-## 5. Cómo ampliar el contrato
+## 5. Pronóstico: qué se puede prometer
+
+Un modelo de ratings ajustados por rival, con probabilidad calibrada. Está en
+`/pronostico`, con el simulador, la tabla de fuerza y la validación en la misma
+pantalla — a propósito: quien mire una probabilidad tiene su calibración
+delante. Sobre
+**3.674 partidos fuera de muestra**, con los ratings reajustados por fecha y el
+modelo entrenado solo con temporadas anteriores:
+
+| Métrica | Modelo | Siempre local | Mejor récord |
+|---|---|---|---|
+| Acierto | **65,8 %** | 54,6 % | 64,6 % |
+| Brier | **0,213** | 0,248 | — |
+| Log-loss | **0,613** | 0,689 | — |
+
+**Lo que se puede prometer y lo que no.** La ganancia en precisión sobre "gana
+el de mejor récord" es de **+1,2 puntos porcentuales, con p=0,083**: real en el
+número, no concluyente al 5 %. El récord ya codifica fuerza y calendario; un
+rating bien hecho añade sobre todo *cuánto* mejor, no *quién*.
+
+Lo que sí aporta y la línea base no puede dar: **probabilidades que significan lo
+que dicen.** Pendiente de calibración 1,06, intercepto −0,00, y los diez tramos
+del diagrama con la probabilidad predicha dentro del intervalo de la frecuencia
+observada. Cuando dice 74,5 %, ganan el 76,7 %.
+
+Tres advertencias que acompañan a cualquier pronóstico:
+
+- **La varianza de un partido aplasta la diferencia de plantilla.** σ del margen
+  ≈ 13 puntos. Un 65 % significa que ese equipo pierde uno de cada tres.
+- **En el ~35 % de partidos que son moneda al aire, el modelo dirá 50 %**, porque
+  no hay más que decir.
+- **Calibrado solo sobre temporada regular.** No usar para playoffs: rotaciones
+  cortas, ajustes de serie y cero back-to-backs cambian el régimen, y con ~450
+  partidos no hay muestra para un modelo propio.
+
+Y una que no es del modelo sino de la muestra: con ~367 partidos por tramo del
+diagrama, no se puede detectar un desajuste de calibración menor de unos **4
+puntos porcentuales**. El ECE esperado bajo calibración perfecta no es cero; se
+publica siempre junto a su suelo de ruido.
+
 ## 6. Qué se repite y qué es la noche
 
 `analysis/stability.py` descompone la varianza de cada componente entre equipos

@@ -1028,6 +1028,90 @@ coeficiente esperando "el μ del modelo" va a leer otra cosa.
 
 ---
 
+## Fase 15 — Probabilidad y calibración
+
+`analysis/forecast.py` y `analysis/calibration.py`. Primer uso real de
+`statsmodels`, que llevaba declarado en `pyproject.toml` desde el principio sin
+importarse en ningún módulo.
+
+### Dos señales de acuerdo, otra vez
+
+La probabilidad sale por **dos rutas independientes** y solo se publica si
+coinciden: una regresión logística sobre el resultado, y una regresión lineal
+sobre el margen que da μ y σ y de ahí `P = Φ(μ/σ)`. La primera solo ve el signo;
+la segunda ve la magnitud. Es el mismo criterio que `analyze_trend` aplica
+exigiendo Mann-Kendall e intervalo antes de declarar una tendencia.
+
+Cinco variables y ni una más: diferencia de rating, localía, descanso y
+back-to-back. Con ~4.500 partidos y σ≈13 puntos de ruido irreducible, cada
+variable extra compra una milésima de log-loss y vende sobreajuste.
+
+### Entrenamiento sin ver el futuro, en dos niveles
+
+Los ratings se reajustan **por fecha** con partidos anteriores, y el modelo de
+probabilidad se entrena **solo con temporadas anteriores** a la que se evalúa.
+La primera temporada no se puntúa porque no tiene con qué entrenarse.
+
+### Resultado sobre 3.674 partidos fuera de muestra
+
+| Métrica | Modelo | Siempre local | Mejor récord |
+|---|---|---|---|
+| Acierto | **65,84 %** | 54,55 % | 64,64 % |
+| Brier | **0,2128** | 0,2479 | — |
+| Log-loss | **0,6132** | 0,6890 | — |
+| Brier Skill Score | **0,1417** | 0 | — |
+
+Tres de las cuatro cifras caen **dentro del rango que se declaró honesto antes
+de medir** (Brier 0,205-0,215; log-loss 0,600-0,620; BSS 0,13-0,17). La
+precisión se queda justo por debajo del +1,5 pp previsto.
+
+Contra la línea base del récord: **+1,20 pp, p=0,083** (McNemar, 329 frente a
+285 discordantes). Igual que en la fase 14, no llega al 5 %. Y no se toca nada
+para empujarlo: la línea base del récord **no produce probabilidades**, así que
+la comparación en precisión es la menos favorable posible para el modelo y aun
+así gana. Donde aporta algo que el récord no puede dar es en las tres filas de
+abajo.
+
+### La calibración
+
+| | |
+|---|---|
+| Pendiente de Cox | **1,06** (perfecto = 1) |
+| Intercepto | **−0,00** (perfecto = 0) |
+| ECE | **0,0117** |
+| Suelo de ruido | 0,0208 |
+
+**El desajuste está por debajo del suelo de ruido de la propia muestra**: con
+~367 partidos por tramo no se puede distinguir de una calibración perfecta. Y
+los **diez tramos** contienen la probabilidad predicha dentro del intervalo de
+Wilson de la frecuencia observada:
+
+```
+     tramo      n    dice    gana           IC 95%
+   0.2-0.3    271   0.252   0.203  [0.159,0.255]
+   0.4-0.5    594   0.453   0.466  [0.427,0.507]
+   0.6-0.7    655   0.649   0.647  [0.610,0.683]
+   0.7-0.8    481   0.745   0.767  [0.727,0.803]
+   0.9-1.0     40   0.921   0.950  [0.835,0.986]
+```
+
+Cuando dice 74,5 %, ganan el 76,7 %. Esa es la propiedad que hace que las
+probabilidades signifiquen lo que dicen, y la que ninguna línea base puede dar.
+
+**El aviso va delante de la tabla, no detrás:** con ~367 partidos por tramo el
+error típico es de ±4,6 puntos porcentuales, así que no se puede detectar un
+desajuste menor de unos 4 pp. Por eso `ece_noise_floor` se publica siempre junto
+al ECE — el ECE esperado bajo calibración perfecta **no es cero**.
+
+### Un aviso sobre esta bitácora
+
+La entrada de la fase 14 se escribió con un `replace` que no volvía a poner el
+ancla, y se llevó por delante la cabecera de "Estado y siguientes pasos". El
+texto siguió ahí, huérfano, hasta que un `grep` no encontró la sección. Queda
+anotado porque es el tipo de error que no rompe nada y se detecta tarde.
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
