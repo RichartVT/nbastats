@@ -94,6 +94,8 @@ export const api = {
     rest_away?: number
     b2b_home?: boolean
     b2b_away?: boolean
+    absent_home?: number
+    absent_away?: number
   }) =>
     get<Prediction>('/predict', {
       home: p.home,
@@ -104,6 +106,8 @@ export const api = {
       ...(p.rest_away !== undefined ? { rest_away: p.rest_away } : {}),
       ...(p.b2b_home ? { b2b_home: 'true' } : {}),
       ...(p.b2b_away ? { b2b_away: 'true' } : {}),
+      ...(p.absent_home ? { absent_home: p.absent_home } : {}),
+      ...(p.absent_away ? { absent_away: p.absent_away } : {}),
     }),
 
   teamCatalog: () => get<{ stats: { value: string; label: string }[] }>('/team-catalog'),

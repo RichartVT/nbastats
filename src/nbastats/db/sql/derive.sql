@@ -71,3 +71,83 @@ SET wins_before = a.wins_before,
 FROM acumulado a
 WHERE t.game_id = a.game_id
   AND t.team_id = a.team_id;
+
+
+-- Índice de ausencias: cuánta rotación no jugó.
+--
+-- POR QUÉ HAY QUE INFERIRLO. La fuente solo trae a los jugadores que
+-- APARECIERON: no hay filas de DNP ni motivo. Así que "ausente" se deduce de un
+-- hueco — estaba con este equipo por estas fechas y este día no tiene fila.
+--
+-- LA REGLA DE LOS TRASPASOS, que es lo único delicado. Un jugador cuenta para un
+-- equipo entre su primera y su última aparición con él. La excepción importa:
+-- si su última aparición con ese equipo es también la última de toda su
+-- temporada, no se fue a ningún sitio — se lesionó — y sigue contando hasta el
+-- final. Sin esa excepción, la lesión de temporada de una estrella desaparecería
+-- del índice justo cuando más pesa.
+--
+-- Se exige `partidos >= 10` para extender hasta el final: sin ese guardarraíl,
+-- un contrato de diez días que jugó dos partidos en noviembre contaría como
+-- ausente los otros ochenta.
+--
+-- ROTACIÓN = 10+ MINUTOS DE MEDIA. Es la definición convencional, elegida por
+-- serlo y no por el resultado que produce. La sensibilidad está publicada en la
+-- bitácora: el recorrido va de 15 a 24 puntos porcentuales según dónde se ponga
+-- el umbral, así que el número depende de la definición y conviene decirlo.
+WITH apariciones AS (
+    SELECT pgs.player_id, pgs.team_id, g.season_id,
+           g.game_date_local AS fecha, pgs.seconds_played
+    FROM player_game_stats pgs
+    JOIN games g ON g.game_id = pgs.game_id
+),
+perfil AS (
+    SELECT player_id, team_id, season_id,
+           MIN(fecha) AS desde, MAX(fecha) AS hasta,
+           COUNT(*) AS partidos,
+           AVG(seconds_played) / 60.0 AS min_habituales
+    FROM apariciones
+    GROUP BY 1, 2, 3
+),
+ultima_liga AS (
+    SELECT player_id, season_id, MAX(fecha) AS ultima
+    FROM apariciones GROUP BY 1, 2
+),
+fin AS (
+    SELECT season_id, MAX(game_date_local) AS fin FROM games GROUP BY 1
+),
+ventana AS (
+    SELECT p.player_id, p.team_id, p.season_id, p.desde, p.min_habituales,
+           CASE WHEN p.hasta = u.ultima AND p.partidos >= 10 THEN f.fin ELSE p.hasta END AS hasta
+    FROM perfil p
+    JOIN ultima_liga u USING (player_id, season_id)
+    JOIN fin f USING (season_id)
+    WHERE p.min_habituales >= 10
+),
+candidatos AS (
+    SELECT tgs.game_id, tgs.team_id, v.player_id, v.min_habituales
+    FROM team_game_stats tgs
+    JOIN games g ON g.game_id = tgs.game_id
+    JOIN ventana v
+      ON v.team_id = tgs.team_id
+     AND v.season_id = g.season_id
+     AND g.game_date_local BETWEEN v.desde AND v.hasta
+),
+ausentes AS (
+    SELECT c.game_id, c.team_id,
+           SUM(c.min_habituales) AS minutos,
+           COUNT(*) AS jugadores
+    FROM candidatos c
+    LEFT JOIN player_game_stats p
+           ON p.game_id = c.game_id AND p.player_id = c.player_id
+    WHERE p.player_id IS NULL
+    GROUP BY 1, 2
+)
+UPDATE team_game_stats t
+SET absent_minutes = COALESCE(a.minutos, 0),
+    absent_players = COALESCE(a.jugadores, 0)
+FROM (
+    SELECT tgs.game_id, tgs.team_id, au.minutos, au.jugadores
+    FROM team_game_stats tgs
+    LEFT JOIN ausentes au ON au.game_id = tgs.game_id AND au.team_id = tgs.team_id
+) a
+WHERE t.game_id = a.game_id AND t.team_id = a.team_id;

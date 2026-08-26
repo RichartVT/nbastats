@@ -310,6 +310,18 @@ class TeamGameStats(Base):
     wins_before: Mapped[int | None] = mapped_column(SmallInteger)
     losses_before: Mapped[int | None] = mapped_column(SmallInteger)
 
+    # Cuánta rotación faltaba. Es el gradiente más fuerte que hay en los datos
+    # sin pedir nada nuevo: del 59,4 % de victorias con la plantilla entera al
+    # 38,0 % con más de 100 minutos habituales fuera.
+    #
+    # SE DERIVA CON LA TEMPORADA ENTERA, y eso lo convierte en una variable de
+    # EXPLICACIÓN, no de pronóstico: los "minutos habituales" de un jugador son
+    # su media de la temporada completa, que incluye partidos posteriores. Usarlo
+    # en el backtest sería fuga por partida doble —esto y el propio hecho de que
+    # no aparecer en el box score se sabe DESPUÉS del partido.
+    absent_minutes: Mapped[Decimal | None] = mapped_column(Rate)
+    absent_players: Mapped[int | None] = mapped_column(Count)
+
 
 class GamePeriodScore(Base):
     """Marcador de un equipo en un periodo. Una fila por partido, equipo y periodo.

@@ -149,6 +149,26 @@ diferencial del subconjunto recalculados. Cada partido enlaza a su ficha.
 
 ---
 
+**Cuánta rotación faltaba en cada partido**
+quiénes de los que suelen jugar no aparecieron, cuántos minutos habituales suman
+y qué se estima que costó. Se deduce de un hueco —la fuente solo trae a quien
+apareció, no hay filas de DNP— con una regla explícita para los traspasos: un
+jugador cuenta para un equipo entre su primera y su última aparición con él,
+salvo que esa última sea también la última de toda su temporada, en cuyo caso no
+se fue a ningún sitio y sigue contando.
+
+Del **59,4 %** de victorias con la plantilla entera al **38,0 %** con más de 100
+minutos fuera, monótono en los seis tramos y también en el margen (+4,2 a −4,4).
+Controlando por la fuerza de ambos equipos, cada minuto vale **0,0373 puntos**
+(t=11,9), y añade 1,75 puntos de varianza explicada sobre los ratings solos.
+
+**Dos advertencias que van pegadas al dato.** "Rotación" son los 10+ minutos de
+media, una decisión convencional: con otros umbrales el recorrido va de 15 a 24
+puntos porcentuales. Y es una variable de **explicación, no de pronóstico** —
+quién no jugó se sabe después del partido, y los minutos habituales se calculan
+con la temporada entera. Por eso no entra en el backtest y en el simulador
+aparece como ajuste separado del número calibrado.
+
 ## 2. Límite A — estructural: lo que NO se puede preguntar
 
 Todo lo de esta lista necesita **play-by-play o datos de tiro**, que hoy no

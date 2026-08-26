@@ -400,6 +400,36 @@ export function GamePage() {
             t.rest_days > 0 &&
             ` · ${t.rest_days} ${t.rest_days === 1 ? 'día' : 'días'} de descanso`}
         </div>
+        {t.absences && t.absences.players > 0 && (
+          <div
+            className="mt-1 text-xs"
+            title={t.absences.absent
+              .map((a) => `${a.full_name} (${a.usual_minutes} min)`)
+              .join('\n')}
+            style={{
+              color:
+                t.absences.level === 'grave'
+                  ? 'var(--status-critical)'
+                  : t.absences.level === 'notable'
+                    ? 'var(--status-warning)'
+                    : 'var(--text-muted)',
+            }}
+          >
+            {t.absences.label}: {t.absences.players}{' '}
+            {t.absences.players === 1 ? 'ausente' : 'ausentes'} ·{' '}
+            {Math.round(t.absences.minutes)} min habituales
+            {t.absences.absent.length > 0 && (
+              <span style={{ color: 'var(--text-muted)' }}>
+                {' — '}
+                {t.absences.absent
+                  .slice(0, 3)
+                  .map((a) => a.full_name)
+                  .join(', ')}
+                {t.absences.absent.length > 3 && ` y ${t.absences.absent.length - 3} más`}
+              </span>
+            )}
+          </div>
+        )}
       </div>
       <div
         className="ml-auto text-3xl font-semibold"

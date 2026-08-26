@@ -831,7 +831,8 @@ def get_game_team_stats(session: Session, game_id: str) -> list[dict]:
                tgs.off_rating, tgs.def_rating, tgs.net_rating,
                tgs.ts_pct, tgs.efg_pct,
                tgs.rest_days, tgs.is_back_to_back,
-               tgs.wins_before, tgs.losses_before
+               tgs.wins_before, tgs.losses_before,
+               tgs.absent_minutes, tgs.absent_players
         FROM team_game_stats tgs
         JOIN teams t ON t.team_id = tgs.team_id
         WHERE tgs.game_id = :gid
@@ -894,4 +895,74 @@ def get_game_player_stats(session: Session, game_id: str) -> list[dict]:
         d = dict(f)
         d["minutes"] = format_seconds(d.pop("seconds_played") or 0)
         salida.append(d)
+    return salida
+
+
+def get_game_absences(session: Session, game_id: str) -> dict[int, list[dict]]:
+    """Quién NO jugó, de los que sí solían jugar. Por equipo.
+
+    Repite la ventana de `derive.sql` en vez de leerla de una tabla porque lo
+    que hay guardado es el AGREGADO (minutos y cuántos), y aquí hacen falta los
+    nombres. Se comprobó que los dos caminos dan lo mismo: para el partido con
+    más ausencias, 9 y 16 jugadores por equipo en ambos.
+
+    Se restringe a la temporada y a los dos equipos del partido, así que baja de
+    los 3,2 M de filas a unos miles: ~20 ms.
+    """
+    sql = text("""
+        WITH partido AS (
+            SELECT game_id, season_id, game_date_local AS fecha,
+                   home_team_id, away_team_id
+            FROM games WHERE game_id = :gid
+        ),
+        ap AS (
+            SELECT pgs.player_id, pgs.team_id, g.game_date_local AS f,
+                   pgs.seconds_played
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE g.season_id = (SELECT season_id FROM partido)
+              AND pgs.team_id IN (
+                  SELECT home_team_id FROM partido
+                  UNION SELECT away_team_id FROM partido)
+        ),
+        pf AS (
+            SELECT player_id, team_id, MIN(f) AS desde, MAX(f) AS hasta,
+                   COUNT(*) AS pj, AVG(seconds_played) / 60.0 AS mh
+            FROM ap GROUP BY 1, 2
+        ),
+        ul AS (
+            SELECT pgs.player_id, MAX(g.game_date_local) AS u
+            FROM player_game_stats pgs
+            JOIN games g ON g.game_id = pgs.game_id
+            WHERE g.season_id = (SELECT season_id FROM partido)
+            GROUP BY 1
+        ),
+        fi AS (
+            SELECT MAX(game_date_local) AS fin FROM games
+            WHERE season_id = (SELECT season_id FROM partido)
+        )
+        SELECT pf.team_id, pf.player_id, p.full_name,
+               ROUND(pf.mh::numeric, 1) AS usual_minutes
+        FROM pf
+        JOIN ul USING (player_id)
+        CROSS JOIN fi
+        CROSS JOIN partido pa
+        JOIN players p ON p.player_id = pf.player_id
+        WHERE pf.mh >= 10
+          AND pa.fecha BETWEEN pf.desde
+              AND (CASE WHEN pf.hasta = ul.u AND pf.pj >= 10 THEN fi.fin ELSE pf.hasta END)
+          AND NOT EXISTS (
+              SELECT 1 FROM player_game_stats x
+              WHERE x.game_id = pa.game_id AND x.player_id = pf.player_id)
+        ORDER BY pf.team_id, usual_minutes DESC
+    """)
+    salida: dict[int, list[dict]] = {}
+    for f in session.execute(sql, {"gid": game_id}).mappings():
+        salida.setdefault(f["team_id"], []).append(
+            {
+                "player_id": f["player_id"],
+                "full_name": f["full_name"],
+                "usual_minutes": float(f["usual_minutes"]),
+            }
+        )
     return salida

@@ -360,7 +360,26 @@ export interface PlayerBoxScore {
   points_by_period: Record<string, number>
 }
 
+export interface AbsentPlayer {
+  player_id: number
+  full_name: string
+  usual_minutes: number
+}
+
+/** Cuánta rotación faltaba. Va en el contexto PREVIO al partido, nunca en el
+ *  bloque de suerte: un equipo sin sus dos mejores no tuvo mala suerte. */
+export interface AbsenceIndex {
+  minutes: number
+  players: number
+  level: 'completa' | 'leve' | 'notable' | 'grave'
+  label: string
+  /** Estimación MEDIA, no una predicción de este partido. */
+  margin_cost: number
+  absent: AbsentPlayer[]
+}
+
 export interface TeamBoxScore {
+  absences: AbsenceIndex | null
   team_id: number
   abbreviation: string
   full_name: string
@@ -617,6 +636,18 @@ export interface Prediction {
   fitted_at: string
   train_games: number
   home_win_prob: number
+  /** Ajuste por ausencias, FUERA del número calibrado. `null` si no se pidió.
+   *  Va aparte a propósito: el modelo no se entrenó con esto, así que fundirlo
+   *  en `home_win_prob` rompería la calibración que sí está medida. */
+  absence_adjustment: {
+    home_minutes: number
+    away_minutes: number
+    margin_shift: number
+    adjusted_margin: number
+    adjusted_prob: number
+    points_per_minute: number
+    note: string
+  } | null
   /** Las dos rutas por separado: si discrepan, el número de arriba es la media
    *  de dos cosas que no se ponen de acuerdo, y eso hay que poder verlo. */
   prob_logit: number

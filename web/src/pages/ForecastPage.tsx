@@ -341,13 +341,18 @@ export function ForecastPage() {
   // en vez de avisar de él.
   const b2bLocal = descLocal === '0'
   const b2bVis = descVis === '0'
+  const [ausLocal, setAusLocal] = useState('0')
+  const [ausVis, setAusVis] = useState('0')
 
   const ratings = useQuery({ queryKey: ['ratings'], queryFn: () => api.ratings() })
   const bt = useQuery({ queryKey: ['backtest'], queryFn: () => api.backtest() })
 
   const equipos = ratings.data?.teams ?? []
   const prediccion = useQuery({
-    queryKey: ['predict', local, visitante, descLocal, descVis, neutral, b2bLocal, b2bVis],
+    queryKey: [
+      'predict', local, visitante, descLocal, descVis, neutral, b2bLocal, b2bVis,
+      ausLocal, ausVis,
+    ],
     queryFn: () =>
       api.predict({
         home: Number(local),
@@ -357,6 +362,8 @@ export function ForecastPage() {
         rest_away: Number(descVis),
         b2b_home: b2bLocal,
         b2b_away: b2bVis,
+        absent_home: Number(ausLocal) || 0,
+        absent_away: Number(ausVis) || 0,
       }),
     enabled: Boolean(local && visitante && local !== visitante),
   })
@@ -395,6 +402,39 @@ export function ForecastPage() {
             <input type="checkbox" checked={neutral} onChange={(e) => setNeutral(e.target.checked)} />
             Sede neutral
           </label>
+        </div>
+
+        {/* Ausencias: el factor con más recorrido de los medidos, y el único
+            que el modelo calibrado NO puede ver. Por eso su efecto se enseña
+            aparte y no fundido en el porcentaje de arriba. */}
+        <div className="mt-3 flex flex-wrap items-end gap-x-5 gap-y-3">
+          {(
+            [
+              ['Minutos ausentes (local)', ausLocal, setAusLocal],
+              ['Minutos ausentes (visit.)', ausVis, setAusVis],
+            ] as const
+          ).map(([etiqueta, valor, set]) => (
+            <label key={etiqueta} className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              <span className="mb-1 block">{etiqueta}</span>
+              <input
+                type="number"
+                min={0}
+                max={300}
+                step={5}
+                value={valor}
+                onChange={(e) => set(e.target.value)}
+                className="tabular w-28 rounded-md px-2.5 py-1.5 text-xs"
+                style={{
+                  background: 'var(--surface-1)',
+                  color: 'var(--text-primary)',
+                  border: '1px solid var(--border)',
+                }}
+              />
+            </label>
+          ))}
+          <span className="pb-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+            Minutos habituales de la rotación que no juegan. Una estrella son ~35.
+          </span>
         </div>
 
         {(b2bLocal || b2bVis) && (
@@ -443,6 +483,30 @@ export function ForecastPage() {
               anteriores. Rutas: logística {pct(prediccion.data.prob_logit)} · margen{' '}
               {pct(prediccion.data.prob_margin)}.
             </p>
+
+            {prediccion.data.absence_adjustment && (
+              <div
+                className="mt-3 rounded-lg px-3 py-2.5"
+                style={{
+                  background: 'color-mix(in srgb, var(--status-warning) 8%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--status-warning) 30%, transparent)',
+                }}
+              >
+                <div className="flex flex-wrap items-baseline gap-2 text-sm">
+                  <strong className="text-lg">
+                    {pct(prediccion.data.absence_adjustment.adjusted_prob)}
+                  </strong>
+                  <span style={{ color: 'var(--text-secondary)' }}>
+                    con las ausencias indicadas · margen{' '}
+                    <strong>{fmtSigned(prediccion.data.absence_adjustment.adjusted_margin, 1)}</strong>{' '}
+                    ({fmtSigned(prediccion.data.absence_adjustment.margin_shift, 2)} puntos)
+                  </span>
+                </div>
+                <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {prediccion.data.absence_adjustment.note}
+                </p>
+              </div>
+            )}
 
             <div className="mt-4 max-w-lg">
               {prediccion.data.components.map((c) => (

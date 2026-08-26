@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from nbastats.analysis.absences import describe_absences
 from nbastats.analysis.game_types import describe_game
 from nbastats.analysis.player_status import describe_status
 from nbastats.analysis.reliability import analyze_splits, benjamini_hochberg
@@ -49,6 +50,8 @@ from nbastats.api.catalog import (
 )
 from nbastats.api.routers import teams as teams_router
 from nbastats.api.schemas import (
+    AbsenceIndexOut,
+    AbsentPlayerOut,
     GameDetailOut,
     GameLogEntryOut,
     GameTypeOut,
@@ -530,6 +533,7 @@ def get_game(game_id: str, db: Session = Depends(get_db)) -> GameDetailOut:
 
     jugadores = q.get_game_player_stats(db, game_id)
     cuartos = q.get_game_player_periods(db, game_id)
+    ausencias = q.get_game_absences(db, game_id)
     por_equipo: dict[int, list[PlayerBoxScoreOut]] = {}
     for j in jugadores:
         fila = PlayerBoxScoreOut(
@@ -539,9 +543,18 @@ def get_game(game_id: str, db: Session = Depends(get_db)) -> GameDetailOut:
         por_equipo.setdefault(j["team_id"], []).append(fila)
 
     def construir(datos: dict) -> TeamBoxScoreOut:
+        # El índice se deriva en `analysis`, no aquí: la API pasa los números y
+        # recibe el nivel y la etiqueta ya decididos, como con la situación del
+        # jugador. Los nombres de los ausentes vienen de su propia consulta.
+        idx = describe_absences(datos.get("absent_minutes"), datos.get("absent_players"))
         return TeamBoxScoreOut(
             **{k: v for k, v in datos.items() if k in TeamBoxScoreOut.model_fields},
             players=por_equipo.get(datos["team_id"], []),
+            absences=AbsenceIndexOut(
+                minutes=idx.minutes, players=idx.players, level=idx.level,
+                label=idx.label, margin_cost=round(idx.margin_cost, 2),
+                absent=[AbsentPlayerOut(**a) for a in ausencias.get(datos["team_id"], [])],
+            ),
         )
 
     local = next(e for e in equipos if e["is_home"])

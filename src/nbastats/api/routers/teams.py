@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from nbastats.analysis.absences import PUNTOS_POR_MINUTO, margin_adjustment
 from nbastats.analysis.forecast import GameFeatures, model_from_params
 from nbastats.analysis.game_types import describe_game
 from nbastats.analysis.reliability import analyze_splits
@@ -305,6 +306,10 @@ def predict(
     rest_away: float = Query(1.0, ge=0, le=10),
     b2b_home: bool = Query(False),
     b2b_away: bool = Query(False),
+    absent_home: float = Query(
+        0.0, ge=0, le=300, description="Minutos habituales de rotación ausentes"
+    ),
+    absent_away: float = Query(0.0, ge=0, le=300),
     db: Session = Depends(get_db),
 ) -> dict:
     """Probabilidad de victoria del local, con el desglose de dónde sale.
@@ -402,6 +407,8 @@ def predict(
             "probabilidad mostrada es la media; tómala con reservas."
         )
 
+    ajuste_ausencias = margin_adjustment(absent_home, absent_away)
+
     return {
         "home": {
             "team_id": home,
@@ -424,6 +431,34 @@ def predict(
         "margin_sigma": round(sigma, 2),
         "margin_ci95": [round(margen - 1.96 * sigma, 1), round(margen + 1.96 * sigma, 1)],
         "components": componentes,
+        # AJUSTE POR AUSENCIAS, DELIBERADAMENTE APARTE del número calibrado.
+        #
+        # El modelo de probabilidad NO se entrenó con esto —no podría, porque
+        # quién no jugó se sabe después del partido— así que fundirlo en
+        # `home_win_prob` rompería la calibración que sí está medida. Se
+        # devuelve como bloque propio para que la pantalla lo enseñe como lo que
+        # es: una corrección razonable y no una promesa del mismo nivel.
+        "absence_adjustment": (
+            {
+                "home_minutes": absent_home,
+                "away_minutes": absent_away,
+                "margin_shift": round(ajuste_ausencias, 2),
+                "adjusted_margin": round(margen + ajuste_ausencias, 2),
+                "adjusted_prob": round(
+                    _norm_cdf((margen + ajuste_ausencias) / float(modelo.sigma)), 4
+                ),
+                "points_per_minute": PUNTOS_POR_MINUTO,
+                "note": (
+                    "Fuera del modelo calibrado. Cada minuto de rotación ausente "
+                    "vale 0,037 puntos de margen, medido sobre 6.140 partidos "
+                    "controlando por la fuerza de ambos equipos. Es una media: dos "
+                    "ausencias de 20 minutos no duelen lo mismo si una es la del "
+                    "base titular."
+                ),
+            }
+            if (absent_home or absent_away)
+            else None
+        ),
         "warnings": avisos,
     }
 

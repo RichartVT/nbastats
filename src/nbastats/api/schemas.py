@@ -602,6 +602,31 @@ class PlayerBoxScoreOut(BaseModel):
     game_score: float | None = None
 
 
+class AbsentPlayerOut(BaseModel):
+    """Un jugador de la rotación que no apareció en el box score."""
+
+    player_id: int
+    full_name: str
+    usual_minutes: float
+
+
+class AbsenceIndexOut(BaseModel):
+    """Cuánta rotación faltaba, y qué se estima que costó.
+
+    `margin_cost` es una MEDIA, no una predicción de este partido: dos ausencias
+    de 20 minutos no duelen lo mismo si una es la del base titular. Va aquí y no
+    en el bloque de suerte a propósito — un equipo sin sus dos mejores no tuvo
+    mala suerte, jugó con otro equipo.
+    """
+
+    minutes: float
+    players: int
+    level: str
+    label: str
+    margin_cost: float
+    absent: list[AbsentPlayerOut] = Field(default_factory=list)
+
+
 class TeamBoxScoreOut(BaseModel):
     team_id: int
     abbreviation: str
@@ -634,6 +659,7 @@ class TeamBoxScoreOut(BaseModel):
     ts_pct: float | None = None
     efg_pct: float | None = None
 
+    absences: AbsenceIndexOut | None = None
     rest_days: int | None = None
     is_back_to_back: bool | None = None
 

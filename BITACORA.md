@@ -38,11 +38,12 @@ Documentos hermanos:
 | 16 | Ratings y pronóstico en pantalla | ✅ Completa — `/pronostico` |
 | 17 | Auditoría: el simulador ahora usa el modelo validado | ✅ Completa — coeficientes persistidos |
 | 18 | Prior entre temporadas + triples, historial y escudos | ✅ Completa — 4.910 partidos con pronóstico |
+| 19 | Índice de ausencias | ✅ Completa — 21,4 pp de recorrido, 13.204/13.204 |
 
 **Números:** 6.602 partidos · 140.932 filas jugador-partido · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
 marcador por periodo · 1.030 jugadores con biografía completa · 5 temporadas
-(2021-22 → 2025-26) · 467 tests · 14 migraciones · **844 MB**.
+(2021-22 → 2025-26) · 482 tests · 15 migraciones · **844 MB**.
 
 ---
 
@@ -1405,6 +1406,100 @@ falta un desplegable propio.
 
 ---
 
+## Fase 19 — Índice de ausencias: quién no jugó
+
+La señal más fuerte que quedaba sin usar, y no costó una sola petición.
+
+### El problema: la fuente solo trae a quien apareció
+
+No hay filas de DNP ni motivo, así que "ausente" hay que **deducirlo de un
+hueco**: este jugador estaba con este equipo por estas fechas y esta noche no
+tiene fila. Lo delicado es el traspaso.
+
+**La regla, y su excepción, que es la que importa.** Un jugador cuenta para un
+equipo entre su primera y su última aparición con él. Pero si su última
+aparición con ese equipo es también la última de toda su temporada, no se fue a
+ningún sitio — se lesionó — y sigue contando hasta el final. Sin esa excepción,
+**la lesión de temporada de una estrella desaparecería del índice justo cuando
+más pesa.**
+
+Con un guardarraíl: solo se extiende si jugó 10 partidos o más con ese equipo.
+Sin él, un contrato de diez días que jugó dos partidos en noviembre contaría como
+ausente los otros ochenta.
+
+### El gradiente
+
+| Minutos habituales fuera | Partidos | Victorias | Margen medio |
+|---|---|---|---|
+| 0–20 | 1.491 | **59,4 %** | +4,2 |
+| 20–40 | 2.029 | 57,6 % | +2,5 |
+| 40–60 | 2.476 | 55,3 % | +1,6 |
+| 60–80 | 2.306 | 50,2 % | +0,2 |
+| 80–100 | 1.776 | 46,9 % | −1,3 |
+| 100+ | 3.126 | **38,0 %** | −4,4 |
+
+Monótono en los seis tramos **y en las dos columnas**, que es más exigente que
+serlo en una.
+
+Controlando por la fuerza de ambos equipos, cada minuto ausente vale **0,0373
+puntos de margen** (EE 0,0031, t=11,9, p=2,3e-32): 3,7 puntos por cada 100
+minutos. Sube el R² de 0,2268 a 0,2443, **+1,75 puntos de varianza explicada**,
+así que no es algo que los ratings ya supieran por otra vía.
+
+### El umbral es una decisión, y se publica su sensibilidad
+
+"Rotación" son los jugadores de 10+ minutos de media — la definición
+convencional, elegida **por serlo y no por el resultado que produce**:
+
+| Umbral | Recorrido del gradiente |
+|---|---|
+| Sin umbral | 15,1 pp (y **no** monótono) |
+| ≥6 min | 17,2 pp |
+| **≥10 min** | **21,4 pp** |
+| ≥15 min | 23,5 pp |
+
+El titular depende de dónde se ponga la raya. Enseñar solo el 23,5 % sería elegir
+el número más vistoso; los 24 pp que figuraban en la fase 11 venían de una regla
+distinta y quedan corregidos aquí.
+
+### Dónde va, y sobre todo dónde no
+
+- **Explicación: sí, y arriba.** Un equipo sin sus dos mejores no tuvo mala
+  suerte: jugó con otro equipo. Va en el contexto previo al partido, junto al
+  récord y el descanso, nunca en el bloque de suerte.
+- **Backtest del pronóstico: NO, por partida doble.** Que un jugador no aparezca
+  en el box score se sabe DESPUÉS del partido; y además los "minutos habituales"
+  se calculan con la temporada entera, que incluye partidos posteriores. Hay un
+  test, `test_el_indice_no_entra_en_las_variables_del_pronostico`, que falla si
+  alguien lo añade a `GameFeatures`.
+- **Simulador: sí, como entrada del usuario y como bloque APARTE.** El modelo
+  calibrado no se entrenó con esto, así que fundirlo en la probabilidad de
+  portada rompería la calibración que sí está medida.
+
+### Comprobaciones
+
+- **Cobertura 13.204/13.204.**
+- **Cero contradicciones**: nadie contado como ausente en un partido en el que
+  tiene fila. Sale por construcción del `LEFT JOIN … IS NULL`, y aun así se
+  comprueba.
+- **Minutos habituales contra `mv_player_season`**: 3.296 jugador-equipo-temporada,
+  **0** discrepancias en partidos jugados y 0,005 minutos de desviación máxima —
+  el redondeo del tipo numérico de la vista. La primera versión de esta
+  comprobación daba 23,77 minutos de desviación y **la equivocada era la
+  comprobación**: la vista tiene grano (jugador, temporada, equipo) y yo agregaba
+  sin el equipo, así que a un traspasado le sumaba los dos destinos.
+- **El detalle cuadra con el agregado**: en el partido con más ausencias, la
+  consulta que devuelve nombres da 9 y 16 jugadores, exactamente lo que dice la
+  columna derivada.
+
+**Un hallazgo colateral que conviene conocer.** 90 equipo-partido (el 0,7 %)
+superan los 240 minutos ausentes, que es más de lo que juega un equipo entero.
+No es un error: ocurren de media al **89,7 %** de la temporada y son los partidos
+en que se reserva a todo el mundo. El índice los detecta bien, pero el tramo de
+"100+" mezcla "dos estrellas fuera" con "descansa la plantilla entera".
+
+---
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -1421,32 +1516,28 @@ publicar los resultados negativos (la curva de edad, el motor de resultado
 esperado) es un activo. Lo que hay no está mal construido; lo que sobra es
 **distancia entre lo construido y lo cableado**.
 
-Orden acordado para lo siguiente. Los puntos 1 a 3 **no cuestan una sola petición
+Orden acordado para lo siguiente. Los puntos 1 y 2 **no cuestan una sola petición
 a la NBA**:
 
-1. **Índice de ausencias** — 24 puntos porcentuales de recorrido medidos, cero
-   peticiones. Va en explicación y en el simulador, **nunca en el backtest**: que
-   un jugador no aparezca en el box score se sabe *después*, y meterlo sería
-   fuga.
-2. **Cablear lo ya construido** — `/expected` con su desglose en la ficha de
+1. **Cablear lo ya construido** — `/expected` con su desglose en la ficha de
    partido y la tabla de `k` de `/stability`. Son 1.081 líneas con 93 tests
    escritos, probados e invisibles.
-3. **Deuda de mantenimiento, antes de que entre la 2026-27.** `daily` no
+2. **Deuda de mantenimiento, antes de que entre la 2026-27.** `daily` no
    actualiza `play_by_play`, `team_season_ratings` ni `game_predictions`: en
    cuanto empiece la temporada nueva, la aplicación servirá ratings viejos **como
    si fueran actuales**. Además: las 8 columnas de origen de los puntos no las
    lee nadie, `TEMPORADAS` está a mano en dos pantallas mientras `/catalog`
    existe justo para eso, no hay ruta 404, y sobran `polars`/`pyarrow`/`duckdb`/
    `httpx` y tres claves de configuración muertas.
-4. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
+3. **Calidad de tiro desde el play-by-play** — 1.168.487 tiros, **todos con
    distancia**. Es la única vía con mecanismo real para rescatar el motor de
    resultado esperado, separando la *decisión* de tiro (estable, k=3) del
    *acierto* (ruido). Se propone con **la prueba fijada de antemano**, la misma
    que ya falló una vez: si a k=10 y k=20 no gana, se publica el negativo y se
    cierra la línea.
-5. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
+4. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
    `games_played` en la misma migración, que es la trampa anotada en la fase 10.
-6. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
+5. **Método delta para las curvas de edad** — sigue pendiente y sigue siendo la
    pregunta más valiosa del proyecto: distinguir "está en declive" de "tiene 34
    años y le pasa lo que a todos".
 
