@@ -153,16 +153,21 @@ function BoxScore({
   vista: Vista
   periodos: { numero: number; etiqueta: string }[]
 }) {
-  const titulares = equipo.players.filter((p) => p.started)
-  const suplentes = equipo.players.filter((p) => !p.started)
-  // `started` está vacío en esta fuente (ver CAPABILITIES.md §2), así que si no
-  // hay titulares marcados se listan todos juntos, por minutos.
-  const grupos = titulares.length
-    ? [
-        { nombre: 'Titulares', jugadores: titulares },
-        { nombre: 'Banquillo', jugadores: suplentes },
-      ]
-    : [{ nombre: '', jugadores: equipo.players }]
+  // Quien no jugó va aparte. Enseñarlo entre los demás con las celdas vacías
+  // confundiría "no anotó" con "no jugó", que no es lo mismo ni de lejos.
+  const jugaron = equipo.players.filter((p) => !p.dnp_reason)
+  const noJugaron = equipo.players.filter((p) => p.dnp_reason)
+  const titulares = jugaron.filter((p) => p.started)
+  const suplentes = jugaron.filter((p) => !p.started)
+
+  const grupos = [
+    ...(titulares.length
+      ? [
+          { nombre: 'Titulares', jugadores: titulares },
+          { nombre: 'Banquillo', jugadores: suplentes },
+        ]
+      : [{ nombre: '', jugadores: jugaron }]),
+  ]
 
   const cabeceras =
     vista === 'basicas'
@@ -337,6 +342,39 @@ function BoxScore({
           partido entero.
         </p>
       )}
+
+      {noJugaron.length > 0 && (
+        <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+          <p
+            className="mb-1.5 text-xs uppercase tracking-wide"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            No jugaron
+          </p>
+          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            {noJugaron.map((p) => (
+              <li key={p.player_id} className="flex items-center gap-1.5">
+                <Link
+                  to={`/jugador/${p.player_id}`}
+                  className="hover:underline"
+                  style={{ color: 'var(--series-1)' }}
+                >
+                  {p.full_name}
+                </Link>
+                <span
+                  style={{
+                    color: /injur|illness/i.test(p.dnp_reason ?? '')
+                      ? 'var(--status-critical)'
+                      : 'var(--text-muted)',
+                  }}
+                >
+                  {motivoBreve(p.dnp_reason)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
@@ -506,6 +544,25 @@ function Marcador({ t, ganador }: { t: TeamBoxScore; ganador: boolean }) {
     </div>
   </Link>
   )
+}
+
+/**
+ * El motivo de un DNP, en español y corto.
+ *
+ * La fuente los da en inglés y con sus siglas: DNP (no jugó, estaba
+ * disponible), DND (no se vistió) y NWT (ni siquiera estaba con el equipo).
+ * La distinción importa —no es lo mismo un descarte técnico que una lesión—
+ * así que se traduce en vez de esconderla.
+ */
+function motivoBreve(motivo: string | null): string {
+  if (!motivo) return ''
+  const m = motivo.toLowerCase()
+  if (m.includes('not with team')) return 'no viajó'
+  if (m.includes('injur') || m.includes('illness')) return 'lesión o enfermedad'
+  if (m.includes('rest')) return 'descanso'
+  if (m.includes("coach")) return 'decisión técnica'
+  if (m.includes('suspension')) return 'sanción'
+  return motivo
 }
 
 export function GamePage() {

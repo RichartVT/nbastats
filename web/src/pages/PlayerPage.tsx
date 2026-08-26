@@ -127,6 +127,15 @@ export function PlayerPage() {
                   <th className="py-2 pr-3 font-medium">Temp.</th>
                   <th className="py-2 pr-3 font-medium">Equipo</th>
                   <th className="py-2 pr-3 text-right font-medium">PJ</th>
+                  {/* Titularidades. Se carga desde la fase 24; en temporadas
+                      sin el dato se enseña un guion en vez de un cero, que
+                      diría algo falso. */}
+                  <th
+                    className="py-2 pr-3 text-right font-medium"
+                    title="Partidos como titular"
+                  >
+                    TIT
+                  </th>
                   <th className="py-2 pr-3 text-right font-medium">Min</th>
                   <th className="py-2 pr-3 text-right font-medium">PTS</th>
                   <th className="py-2 pr-3 text-right font-medium">REB</th>
@@ -155,6 +164,12 @@ export function PlayerPage() {
                       {t.team}
                     </td>
                     <td className="tabular py-2 pr-3 text-right">{t.games_played}</td>
+                    <td
+                      className="tabular py-2 pr-3 text-right"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      {t.games_started ?? '—'}
+                    </td>
                     <td className="tabular py-2 pr-3 text-right">{fmt(t.min_per_game, 1)}</td>
                     <td className="tabular py-2 pr-3 text-right font-medium">
                       {fmt(t.pts_per_game, 1)}

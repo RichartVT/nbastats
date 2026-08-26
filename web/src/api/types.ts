@@ -322,6 +322,8 @@ export interface PlayerSeason {
 }
 
 export interface PlayerBoxScore {
+  /** Informado = no jugó. "DNP - Coach's Decision", "DND - Injury/Illness"… */
+  dnp_reason: string | null
   player_id: number
   full_name: string
   jersey_number: string | null

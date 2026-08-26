@@ -565,6 +565,14 @@ class PlayerBoxScoreOut(BaseModel):
     team_id: int
     minutes: str
     started: bool | None = None
+    dnp_reason: str | None = Field(
+        None,
+        description=(
+            "Si viene informado, el jugador NO jugó y esto dice por qué. Su "
+            "fila no tiene estadísticas, y enseñarla con celdas vacías sería "
+            "confundir 'no anotó' con 'no jugó'."
+        ),
+    )
 
     pts: int | None = None
     fgm: int | None = None

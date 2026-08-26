@@ -895,7 +895,7 @@ def get_game_player_stats(session: Session, game_id: str) -> list[dict]:
     """
     sql = text("""
         SELECT pgs.player_id, p.full_name, p.jersey_number, p.position,
-               pgs.team_id, pgs.seconds_played, pgs.started,
+               pgs.team_id, pgs.seconds_played, pgs.started, pgs.dnp_reason,
                pgs.pts, pgs.fgm, pgs.fga, pgs.fg3m, pgs.fg3a, pgs.ftm, pgs.fta,
                pgs.oreb, pgs.dreb, pgs.reb, pgs.ast, pgs.stl, pgs.blk,
                pgs.tov, pgs.pf, pgs.plus_minus,

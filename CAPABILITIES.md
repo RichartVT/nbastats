@@ -32,7 +32,8 @@ tiros de campo / triples / libres (anotados e intentados), +/-, minutos, y las
 avanzadas: TS%, eFG%, USG%, AST%, REB%, TOV%, rating ofensivo/defensivo, ritmo,
 PIE.
 
-(La **titularidad** no está: ver §2.)
+(La **titularidad** sí está desde la fase 24: `started` y `dnp_reason` en las
+172.477 filas jugador-partido, de las cuales 31.545 son de quien no jugó.)
 
 **Desglose por cuarto**
 puntos, rebotes, asistencias, robos, tapones, pérdidas, +/- y minutos de cada
@@ -193,6 +194,18 @@ no significa "la temporada no coincide" sino **"hay partidos jugados después de
 semanas sin recalcularse. Antes no había forma de distinguir unos ratings de
 anoche de unos de hace ocho meses.
 
+**Quién salió de inicio y quién no jugó, con el motivo**
+`started` y `dnp_reason` en los 6.602 partidos, sin una sola excepción (cero
+partidos con un número de titulares distinto de 10). Permite el split
+titular/suplente, las titularidades por temporada, y separar en la ficha de
+partido a quien no jugó — con celdas vacías se confundiría "no anotó" con "no
+jugó".
+
+**Con su aviso:** salir de inicio no es una condición del jugador sino una
+decisión del entrenador, que suele seguir al rendimiento y a las lesiones de
+otros. Un jugador que rinde mejor de titular puede estar diciendo que juega
+mejor con los titulares, no que le siente bien el rol.
+
 ## 2. Límite A — estructural: lo que NO se puede preguntar
 
 Todo lo de esta lista necesita **play-by-play o datos de tiro**, que hoy no
@@ -212,8 +225,8 @@ están cargados.
 | Pregunta | Por qué no |
 |---|---|
 | "¿A quién defendió?" | Requiere datos de seguimiento (tracking), que ni siquiera están en el play-by-play. `BoxScorePlayerTrackV3`, ~6.600 peticiones. |
-| "¿Rinde mejor como titular que saliendo del banquillo?" | `PlayerGameLogs` no marca quién fue titular. Requeriría una petición por partido (~6.600) en vez de una por temporada. |
-| "¿Cuántos partidos se perdió por lesión?" | Solo aparecen los jugadores que jugaron: no hay filas de DNP ni motivo. Misma fuente y mismo coste que la anterior. Y ojo: ni siquiera con ella se distingue lesión de descanso programado o sanción. |
+| ~~"¿Rinde mejor como titular?"~~ | **Ya se puede** (fase 24): dimensión `starter` de los splits. |
+| ~~"¿Cuántos partidos se perdió por lesión?"~~ | **Ya se puede**, con matices: la fuente distingue `DND - Injury/Illness` de `DNP - Coach's Decision`, `DND - Rest` y `NWT - Not With Team`. Lo que NO dice es la lesión concreta ni cuánto durará. Y solo lista a quien estuvo en el acta: a un lesionado de larga duración ni lo menciona, y ahí el que lo caza es el índice de ausencias inferido. |
 | "¿Fue un tiro abierto o contestado?" | El play-by-play da dónde se tiró, no quién estaba cerca. Requiere tracking. |
 | "¿Por qué eligió ese tiro?" | Ninguna fuente lo tiene. |
 | "¿Qué puesto ocupa en FG% de la liga?" | Se responde, pero con un umbral distinto al oficial: la NBA cualifica los porcentajes por mínimo de intentos (300 tiros anotados) y aquí se usa el de partidos. Los puestos de puntos, rebotes y asistencias sí coinciden exactamente con las fuentes públicas. |
@@ -437,7 +450,7 @@ se expone lo que no aguanta, y el motivo queda escrito.
 | ¿Acierta más en el clutch? | ⚠️ Tipo B — el dato ya está; la muestra sigue sin dar |
 | Mejor quinteto del equipo | ⚠️ Tipo B — las sustituciones ya están, pero el quinteto nº10 juega ~40 min en toda la temporada |
 | ¿A quién defendió? | ❌ Tipo A — requiere tracking |
-| ¿Rinde mejor como titular? | ❌ Tipo A — `started` sin cargar |
+| ¿Rinde mejor como titular? | ✅ Directo — dimensión `starter` |
 
 ---
 
@@ -581,7 +594,7 @@ endpoint masivo admite el filtro.
 
 | Ampliación | Qué desbloquea | Coste |
 |---|---|---|
-| **Titularidad y DNP** (`BoxScoreTraditionalV3`) | `started`, `dnp_reason`, split titular/banquillo | ~6.600 peticiones, ~1,3 h. **Ojo**: devuelve también a los que no jugaron, y eso rompe la definición de `games_played` en `mv_player_season` — hay que corregirla en la misma migración |
+| ~~Titularidad y DNP~~ | **Hecho** en la fase 24: 6.599 peticiones, 0 fallos, ~78 min. La trampa era real —añadía 28.619 partidos falsos a `games_played` y habría hundido el índice de ausencias de 72,5 a 43,4 minutos de media sin dar un solo error— y se cortó filtrando los DNP en la capa de tasas. Invariante tras la carga: 140.932 filas de tasas, exactamente las mismas que antes |
 | ~~**Shot charts** (`ShotChartDetail`)~~ | ~~Zonas de tiro~~ | **Nunca hará falta**: las coordenadas venían dentro del play-by-play, ya cargado. Se ahorró una pasada entera de ~3.000 peticiones |
 | **Tracking** (`BoxScorePlayerTrackV3`) | Distancia recorrida, velocidad, emparejamientos defensivos | ~6.600 peticiones; solo desde 2013-14 |
 
