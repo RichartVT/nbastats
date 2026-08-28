@@ -5,9 +5,18 @@ declive, jugadores al alza y rendimiento condicionado (día, descanso, rival,
 localía) sobre cinco temporadas.
 
 El objetivo no es guardar números, sino producir conclusiones que aguanten.
-Por eso hay una pieza que no es habitual en un proyecto así:
-[`CAPABILITIES.md`](CAPABILITIES.md), el contrato de qué preguntas se pueden
-contestar y cuáles devuelven un número que no significa nada.
+
+## La documentación, y para qué sirve cada pieza
+
+| Documento | Para qué |
+|---|---|
+| [`COMO_FUNCIONA.md`](COMO_FUNCIONA.md) | **Empieza aquí.** El recorrido de un dato de la NBA a la pantalla, y cómo se calcula un pronóstico paso a paso |
+| [`CONCLUSIONES.md`](CONCLUSIONES.md) | Qué sabe hacer el sistema **con el número al lado**, qué está en su techo y qué haría falta para mejorarlo |
+| [`CAPABILITIES.md`](CAPABILITIES.md) | El contrato: qué preguntas se pueden contestar y cuáles devuelven un número que no significa nada |
+| [`BITACORA.md`](BITACORA.md) | El registro cronológico de las 24 fases, con los resultados negativos incluidos |
+
+Las dos primeras son las que explican el sistema; las dos últimas son las que
+impiden usarlo mal.
 
 ## Requisitos
 

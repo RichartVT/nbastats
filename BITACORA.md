@@ -44,6 +44,7 @@ Documentos hermanos:
 | 22 | Calidad de tiro desde el play-by-play | ✅ Completa — **resultado negativo**, línea cerrada |
 | 23 | Curva de edad por método delta | ✅ Completa — sesgo corregido y medido |
 | 24 | Titularidad y DNP | ✅ Completa — 6.602/6.602, invariante al dígito |
+| 25 | El techo del pronóstico, medido | ✅ Completa — está en el límite del ruido |
 
 **Números:** 6.602 partidos · 172.477 filas jugador-partido (140.932 apariciones + 31.545 DNP) · 481.863 filas
 jugador-partido-cuarto · **3.251.908 eventos de play-by-play** · 53.534 filas de
@@ -1990,6 +1991,112 @@ hace cuadrar la invariante al dígito.
   que no era obvia: el motivo explica las ausencias **cortas**, mientras el
   índice inferido caza las **largas** — a Markkanen o Morant, fuera meses, la
   fuente ni los lista en el partido.
+
+---
+
+## Fase 25 — Dónde está el techo, y qué es lo único que lo mueve
+
+De una pregunta —"¿se puede predecir la 2025-26 congelando todo en junio?"— salieron cinco
+mediciones que contestan algo más grande. Ninguna costó una petición a la NBA.
+
+### El modelo está en su techo, y se puede demostrar
+
+Si el margen esperado de cada partido fuera **exacto**, con σ=13,81 el acierto máximo alcanzable
+sería del **64,28 %**. El modelo acierta el **65,76 %** — está en el límite, y por encima de su
+propio techo calculado porque su calibración es un pelo conservadora (pendiente 1,07), lo que hace
+que ese cálculo se quede corto.
+
+Lo que limita el acierto no es el modelo: es que un partido de la NBA tiene 13,8 puntos de ruido
+frente a un margen esperado medio de 5,3.
+
+**Y sabe cuáles sabe**, que es el verdadero producto:
+
+| Lo que dice el modelo | Partidos | Acierto real |
+|---|---|---|
+| 50-55 % (casi moneda) | 1.044 (21 %) | **52,4 %** |
+| 55-65 % | 1.675 (34 %) | 60,1 % |
+| 65-75 % | 1.280 (26 %) | 72,4 % |
+| 75 %+ | 907 (18 %) | **82,2 %** |
+
+Monótono en los cuatro tramos. Cuando dice que no lo sabe, **tiene razón en no saberlo**.
+
+### Congelar en junio no funciona, para ningún producto
+
+Se predijo la 2025-26 entera sin un solo dato de la 2025-26. Las constantes se re-derivaron
+excluyéndola, porque usar las publicadas habría sido fuga: la persistencia sobre 3 transiciones da
+**0,531 / 0,597**, no los 0,450 / 0,554 medidos con las cuatro.
+
+| | Acierto |
+|---|---|
+| Congelado en junio | 59,84 % |
+| Mejor récord de 2024-25 | 59,43 % |
+| Siempre gana el local | 55,43 % |
+
+**+0,41 puntos sobre la línea base tonta**, y la calibración se rompe: pendiente 0,849, o sea
+exceso de confianza — usa ratings de junio como si fueran de hoy. Congelar cuesta **seis puntos**
+frente al walk-forward normal.
+
+Como proyección de temporada tampoco: error medio de **9,68 victorias** contra las 10,30 de "lo
+mismo que el año pasado", con fallos de hasta **±25 victorias**. Un equipo proyectado con 36 ganó 61.
+
+La causa está medida desde la fase 18: un equipo conserva **ρ≈0,5** de su identidad tras un verano,
+y lo que decide el resto —traspasos, draft, desarrollo, lesiones— no existe en junio.
+
+### Una cifra que di mal, y su corrección
+
+En la conversación afirmé que los "+3 puntos" de las alineaciones se sumarían al 65,76 %. **Era
+falso.** Aquellos +3 pp eran del escenario congelado, donde no hay ratings actualizados que
+absorban la información. Medido sobre el sistema real:
+
+| | Acierto | Brier | log-loss |
+|---|---|---|---|
+| Hoy | 65,76 % | 0,2133 | 0,6147 |
+| + todas las ausencias | 66,84 % | 0,2104 | 0,6083 |
+| **+ solo lo conocible antes del partido** | **67,24 %** | **0,2090** | **0,6051** |
+
+**+1,49 pp con p=0,0003**, no +3. Los ratings actualizados ya absorben buena parte de la
+información: un equipo que juega sin sus estrellas acumula peores resultados y su rating baja solo.
+Las ausencias solo añaden lo que el rating aún no ha visto — la baja de **esta** noche.
+
+### El hallazgo bueno: el parte de lesiones bate a la alineación real
+
+Reparto de los minutos ausentes según si se saben antes del salto inicial:
+
+| Motivo | Minutos | % | ¿Se sabe antes? |
+|---|---|---|---|
+| Ni figura en el acta (baja larga) | 670.885 | 70,1 % | Sí |
+| Decisión técnica | 191.556 | **20,0 %** | **No** |
+| Lesión o enfermedad | 89.513 | 9,4 % | Sí — parte oficial |
+| Descanso / no viajó | 4.813 | 0,5 % | Sí |
+
+Y aquí está lo que no se esperaba: **usar solo el 80 % conocible da MÁS (+1,49 pp) que usarlo todo
+(+1,08 pp)**.
+
+El "DNP - Decisión técnica" no es una ausencia útil. Es un jugador sano al que el entrenador no
+usó, muchas veces con el partido ya decidido o porque es el duodécimo hombre. **Añade ruido, no
+señal**, y el parte de lesiones lo filtra por construcción.
+
+Consecuencia práctica: **no hace falta la alineación anunciada**. El parte de lesiones y la lista de
+inactivos, que salen ~1 h antes, son suficientes y además mejores.
+
+**Con su salvedad, que es importante:** esta medición reconstruye el parte desde el box score, o sea
+simula un parte **perfecto**. Uno real tiene "duda" y "probable" y algunos de ésos acaban jugando,
+así que el número real quedaría algo por debajo de 67,24 %. Y no hay endpoint histórico —la NBA lo
+publica en PDF—, así que solo podría capturarse hacia adelante.
+
+### El montaje, para que se pueda repetir
+
+Dos detalles sin los cuales estas cifras estarían infladas:
+
+1. **Constantes re-derivadas excluyendo la temporada objetivo.** Persistencia, λ y el coeficiente de
+   ausencias se midieron con las cinco temporadas; usarlos para predecir una de ellas es fuga.
+2. **Índice de ausencias sin fuga.** Los "minutos habituales" se calculan con una media móvil hasta
+   el partido **anterior**, no con la temporada entera. El coeficiente honesto sale entre **+0,0287
+   y +0,0432** según el año, no el +0,0373 publicado.
+
+El `PUNTOS_POR_MINUTO = 0,0373` de `absences.py` **no se toca**: es el correcto para explicar un
+partido ya jugado, que es para lo que se usa. Un sistema prospectivo necesitaría el otro, y todavía
+no hay dónde usarlo.
 
 ---
 

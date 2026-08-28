@@ -491,6 +491,21 @@ que dicen.** Pendiente de calibración 1,06, intercepto −0,00, y los diez tram
 del diagrama con la probabilidad predicha dentro del intervalo de la frecuencia
 observada. Cuando dice 74,5 %, ganan el 76,7 %.
 
+**La prueba de que las probabilidades significan lo que dicen** no es la calibración media sino
+esto — qué pasa cuando el modelo dice cada cosa:
+
+| Lo que dice | Partidos | Acierto real |
+|---|---|---|
+| 50-55 % (casi moneda) | 1.044 (21 %) | **52,4 %** |
+| 55-65 % | 1.675 (34 %) | 60,1 % |
+| 65-75 % | 1.280 (26 %) | 72,4 % |
+| 75 %+ | 907 (18 %) | **82,2 %** |
+
+Monótono en los cuatro tramos. **Cuando dice que no lo sabe, tiene razón en no saberlo.**
+
+Y el acierto está en su techo: si el margen esperado fuera exacto, con σ=13,81 el máximo alcanzable
+sería el **64,28 %**. Subir de ahí exige información nueva, no mejor modelo.
+
 Tres advertencias que acompañan a cualquier pronóstico:
 
 - **La varianza de un partido aplasta la diferencia de plantilla.** σ del margen
