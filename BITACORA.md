@@ -2100,6 +2100,86 @@ no hay dónde usarlo.
 
 ---
 
+## Fase 26 — La titularidad se borraba sola cada noche
+
+Un subagente revisor de la capa PostgreSQL (`.claude/agents/database-reviewer.md`,
+solo lectura: sin `Edit`, sin `Write`, sin `Bash`) encontró un fallo que la suite
+de 513 tests no podía ver, porque no es un error de cálculo sino de **propiedad
+de las columnas**.
+
+`upsert()` actualizaba todas las columnas que no fueran clave:
+
+```python
+updatable = [c.name for c in model.__table__.columns if c.name not in keys]
+set_={name: stmt.excluded[name] for name in updatable}
+```
+
+`EXCLUDED` vale NULL en toda columna que no viaje en el `INSERT`. Y `daily`
+arranca recargando la temporada en curso entera. Así que cada pasada nocturna
+ponía a NULL lo que escribe otra ingesta: `started` y `dnp_reason`
+(starters.py), `attendance` y `arena_name` (summaries.py), `game_label` y
+`game_sublabel` (enrich.py), la ficha de franquicia y la conferencia (teams.py),
+y las cuatro derivadas de derive.sql.
+
+**Lo que lo volvía permanente en el caso de la titularidad:** `ingest_starters()`
+no tenía ningún llamador. Cero referencias fuera de su propio módulo en todo
+`src/` y `tests/` — ni comando en `cli.py`, ni test. Las 31.545 filas de la fase
+24 se cargaron a mano y nada las reponía.
+
+Las dos consecuencias, y por qué no se vieron:
+
+- `mv_player_season.games_started` = `COUNT(*) FILTER (WHERE started)` daba **0**
+  para toda la temporada en curso.
+- El split titular/suplente metía a los cinco titulares en `'suplente'`, porque
+  `CASE WHEN NULL` cae al `ELSE`.
+
+Ninguna de las dos es un error visible. Son **respuestas plausibles**: un 0 y una
+comparación que se puede leer sin sospechar. Es exactamente el modo de fallo
+contra el que existe la capa de honestidad estadística de este proyecto, colado
+por debajo, en la ingesta.
+
+Lo curioso: el docstring de `starters.py` ya describía el mecanismo —«el upsert
+genérico pone a NULL toda columna que no venga en la fila»— y lo esquivaba con un
+`UPDATE` dirigido. Se vio el problema en local y no se vio que `bulk.py` hacía
+justo eso, en sentido contrario, cada noche.
+
+**El arreglo**, en dos mitades que hacen falta las dos:
+
+1. `upsert()` actualiza solo las columnas presentes en las filas (unión de todas,
+   no las de la primera). Con `on_conflict_do_nothing()` cuando no queda nada
+   fuera de la clave, porque un `SET` vacío es un error de sintaxis en Postgres.
+2. Comando `ingest-starters` y su llamada en `daily`. Sin esto el arreglo no
+   basta: `ingest_seasons` inserta a los que jugaron **sin** `started`, así que
+   las filas nuevas nacen sin informar aunque las viejas ya no se borren.
+
+Y se quitaron los `None` explícitos de los cuatro constructores. El comentario
+que los justificaba —«se pasan explícitas a None porque el upsert pone a NULL
+toda columna ausente»— documentaba el fallo como si fuera el diseño.
+
+8 tests nuevos, de los que **7 fallan contra el código anterior** (el octavo es
+un guarda de la clave, que ya era correcto). Suite: 521 pasan.
+
+### Lo que queda abierto de esa revisión
+
+- **Reparar los datos ya en blanco.** El arreglo corta la causa, no rehace lo
+  perdido. Pide un `ingest-summaries --all` (~1,5 h) y un `ingest-starters --all`
+  (~1,3 h) una vez. **No** se cambió el criterio de `only_missing` a
+  `arena_name IS NULL`: hay partidos sin pabellón en la fuente, y volverían a
+  pedirse cada noche para siempre.
+- **`ot_periods`** lo sigue pisando la heurística `round((MIN-48)/5)` de
+  `bulk.py` sobre el valor exacto de `summaries.py`. Viaja en el payload, así que
+  el arreglo del upsert no lo cubre.
+- Nueve hallazgos más, de media y baja: las cuatro transacciones separadas de
+  `refresh_views()` (un INNER JOIN pierde el partido de anoche), la cabecera de
+  `summaries` fuera de la transacción de los periodos, los `CHECK` de rango que
+  faltan en las columnas de fracción (`numeric(6,4)` solo caza escalas ≥ 100),
+  texto sin recortar en columnas de ancho fijo, cuatro índices sobrantes, y
+  `/teams/{a}/vs/{b}` promediando temporada regular y playoffs.
+
+Lo que salió limpio, comprobado uno a uno: los 17 `ON CONFLICT` tienen respaldo
+exacto en la PK de su tabla, y las cuatro vistas materializadas tienen su
+`CREATE UNIQUE INDEX`, así que `REFRESH CONCURRENTLY` funciona en todas.
+
 ## 🔵 Estado y siguientes pasos
 
 El sistema está **completo y funcionando de punta a punta**. Levantarlo:
@@ -2116,10 +2196,15 @@ publicar los resultados negativos (la curva de edad, el motor de resultado
 esperado) es un activo. Lo que hay no está mal construido; lo que sobra es
 **distancia entre lo construido y lo cableado**.
 
-Orden acordado para lo siguiente. 
+Orden acordado para lo siguiente.
 
-1. **Titularidad y DNP** (~6.600 peticiones, ~1,3 h) — con la corrección de
-   `games_played` en la misma migración, que es la trampa anotada en la fase 10.
+1. **Reparar los datos que el upsert dejó en blanco** (fase 26): un
+   `ingest-summaries --all` y un `ingest-starters --all`, una vez.
+2. **Play-by-play** (~6.600 peticiones) — lo único sin atajo por endpoint
+   masivo. Desbloquea clutch, desglose por cuartos y zonas de tiro.
+3. **Pantalla de head-to-head** — el endpoint `/teams/{a}/vs/{b}` existe desde
+   la fase 20 y no tiene interfaz. Arreglar de paso que promedia temporada
+   regular y playoffs en una sola cifra.
 
 
 Descartado a propósito: quintetos como funcionalidad destacada (los 319.323

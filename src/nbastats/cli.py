@@ -285,6 +285,39 @@ def ingest_summaries_cmd(
         )
 
 
+@app.command("ingest-starters")
+def ingest_starters_cmd(
+    seasons: str = typer.Option("", help="Coma-separadas. Vacío = todas las cargadas"),
+    all_games: bool = typer.Option(False, "--all", help="Reprocesar también los ya cargados"),
+    limit: int = typer.Option(0, help="Solo los N primeros pendientes. Para probar"),
+    verbose: bool = False,
+) -> None:
+    """Titularidad y motivo de DNP: quién salió de inicio y quién no jugó.
+
+    UNA PETICIÓN POR PARTIDO: ~6.600 peticiones y algo más de una hora para la
+    carga completa. `PlayerGameLogs` no distingue titular de suplente ni trae a
+    los que no jugaron; `BoxScoreTraditionalV3` sí. Reanudable: retoma por los
+    partidos en los que ninguna fila tiene `started` informado.
+
+    TIENE QUE CORRER EN CADA PASADA DIARIA. `daily` recarga la temporada en
+    curso entera, y los partidos recargados vuelven con `started` sin informar
+    hasta que esto pasa por ellos.
+    """
+    _configurar_logging(verbose)
+    from nbastats.ingest.starters import ingest_starters
+
+    lista = [x.strip() for x in seasons.split(",") if x.strip()] or None
+    r = ingest_starters(lista, only_missing=not all_games, limit=limit or None)
+    console.print(
+        f"[green]{r['pedidos']:,} partidos · {r['actualizadas']:,} filas con "
+        f"titularidad · {r['nuevas']:,} filas de DNP nuevas[/green]"
+    )
+    if r["fallidos"]:
+        console.print(
+            f"[yellow]{r['fallidos']} sin box score: vuelve a lanzarlo para reintentar[/yellow]"
+        )
+
+
 @app.command("ingest-pbp")
 def ingest_pbp_cmd(
     seasons: str = typer.Option("", help="Coma-separadas. Vacío = todas"),
@@ -404,6 +437,7 @@ def daily(verbose: bool = False) -> None:
     from nbastats.ingest.enrich import enrich_games
     from nbastats.ingest.periods import ingest_periods, verificar_cuadre
     from nbastats.ingest.playbyplay import ingest_play_by_play
+    from nbastats.ingest.starters import ingest_starters
     from nbastats.ingest.summaries import ingest_game_summaries
     from nbastats.ingest.teams import ingest_all_team_data
     from nbastats.ratings_job import rebuild_ratings
@@ -431,6 +465,18 @@ def daily(verbose: bool = False) -> None:
     # Solo los partidos sin resumen: los de anoche, no los 6.602.
     resumenes = ingest_game_summaries([season], only_missing=True)
     console.print(f"  {resumenes['pedidos'] - resumenes['fallidos']:,} resúmenes de partido")
+
+    # NO ES OPCIONAL, por el mismo motivo que los ratings. `ingest_seasons`
+    # inserta a los que jugaron sin `started`, así que sin esta línea la
+    # titularidad de la temporada en curso se queda sin informar: los splits
+    # titular/suplente meterían a los cinco titulares en 'suplente', porque
+    # `CASE WHEN NULL` cae al ELSE, y `games_started` daría 0 en toda la
+    # temporada. Solo los partidos que falten: los de anoche, no los 6.602.
+    titulares = ingest_starters([season], only_missing=True)
+    console.print(
+        f"  {titulares['actualizadas']:,} filas con titularidad, "
+        f"{titulares['nuevas']:,} DNP"
+    )
 
     # Solo los partidos sin play-by-play: ~10 en una noche, no los 6.602.
     pbp = ingest_play_by_play([season], only_missing=True)

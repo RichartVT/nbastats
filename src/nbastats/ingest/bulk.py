@@ -87,21 +87,41 @@ def upsert(
 ) -> int:
     """Inserta o actualiza por lotes.
 
-    Se actualizan todas las columnas que no formen parte de la clave. Es lo
-    correcto aquí: la fuente es autoritativa y una recarga debe traer las
+    Se actualizan las columnas **que vengan en las filas**, y solo ésas. Para lo
+    que la fuente envía sigue mandando la fuente: una recarga debe traer las
     correcciones oficiales de la NBA, no conservar el valor viejo.
+
+    LO QUE NO ENVÍA ES DE OTRO. `EXCLUDED` vale NULL en toda columna ausente del
+    INSERT, así que actualizarlas todas —como se hacía— borraba en cada pasada
+    lo que escribe otra ingesta: `started` y `dnp_reason` (starters.py),
+    `attendance` y `arena_name` (summaries.py), la ficha de franquicia y la
+    conferencia (teams.py) y las cuatro derivadas de derive.sql. El daño no se
+    veía porque el dato se recargaba entero cada noche y volvía a NULL: la
+    columna nunca llegaba a estar mal, simplemente estaba vacía.
     """
     if not rows:
         return 0
 
-    updatable = [c.name for c in model.__table__.columns if c.name not in keys]
+    # La unión de todas las filas, no las claves de la primera: un constructor
+    # puede omitir una clave opcional en algunas filas y no en otras.
+    presentes = {clave for fila in rows for clave in fila}
+    updatable = [
+        c.name
+        for c in model.__table__.columns
+        if c.name not in keys and c.name in presentes
+    ]
 
     for chunk in _chunked(rows):
         stmt = pg_insert(model).values(list(chunk))
-        stmt = stmt.on_conflict_do_update(
-            index_elements=list(keys),
-            set_={name: stmt.excluded[name] for name in updatable},
-        )
+        if updatable:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=list(keys),
+                set_={name: stmt.excluded[name] for name in updatable},
+            )
+        else:
+            # Las filas no traen nada fuera de la clave: no hay nada que
+            # actualizar, y un `set_` vacío es un error de sintaxis en Postgres.
+            stmt = stmt.on_conflict_do_nothing(index_elements=list(keys))
         session.execute(stmt)
 
     return len(rows)
@@ -184,8 +204,9 @@ def ensure_teams(session: Session) -> int:
             "full_name": t["full_name"],
             "city": t.get("city"),
             "nickname": t.get("nickname"),
-            "conference": None,
-            "division": None,
+            # `conference`/`division` las pone _backfill_conference(), y la ficha
+            # de franquicia (estadio, entrenador...) la pone ingest/teams.py.
+            # No viajan aquí, así que el upsert ya no las toca.
             "arena_timezone": ARENA_TIMEZONES.get(t["id"]),
         }
         for t in NBAClient.static_teams()
@@ -359,14 +380,14 @@ def _build_games(
                 "season_id": season_id,
                 "season_type": season_type,
                 "game_date_local": fecha,
-                "tipoff_utc": None,
+                # `tipoff_utc` lo pone enrich.py; `attendance` y `arena_name`,
+                # summaries.py. Igual que `game_label`/`game_sublabel`, no
+                # viajan aquí para que la recarga diaria no los borre.
                 "home_team_id": local["TEAM_ID"],
                 "away_team_id": visitante["TEAM_ID"],
                 "home_pts": _num(local.get("PTS")),
                 "away_pts": _num(visitante.get("PTS")),
                 "ot_periods": _overtime_periods(local.get("MIN")),
-                "attendance": None,
-                "arena_name": None,
                 "is_neutral_site": es_neutral,
             }
         )
@@ -446,15 +467,13 @@ def _build_team_stats(
                 "opp_pts_fastbreak": _num(misc.get("OPP_PTS_FB")),
                 "opp_pts_off_turnovers": _num(misc.get("OPP_PTS_OFF_TOV")),
                 "opp_pts_2nd_chance": _num(misc.get("OPP_PTS_2ND_CHANCE")),
-                # Estas cuatro se calculan DESPUÉS, en db/sql/derive.sql:
+                # `rest_days`, `is_back_to_back`, `wins_before` y
+                # `losses_before` se calculan DESPUÉS, en db/sql/derive.sql:
                 # dependen de los partidos anteriores del equipo, que pueden no
-                # estar cargados todavía. Se pasan explícitas a None porque el
-                # upsert pone a NULL toda columna ausente, y verlas aquí evita
-                # que alguien las busque en vano en la respuesta de la API.
-                "rest_days": None,
-                "is_back_to_back": None,
-                "wins_before": None,
-                "losses_before": None,
+                # estar cargados todavía. Y `absent_minutes`/`absent_players`
+                # salen de absences.py. Ninguna viaja aquí: si lo hicieran a
+                # None, la recarga diaria las dejaría vacías hasta que
+                # `compute_derived_columns()` corriese al final de la pasada.
             }
         )
     return filas
@@ -481,8 +500,8 @@ def _build_player_stats(
                 ),
                 # PlayerGameLogs no distingue titular de suplente ni informa de
                 # los DNP: solo aparecen los que jugaron. Ver CAPABILITIES.md.
-                "started": None,
-                "dnp_reason": None,
+                # Ambas las escribe starters.py y NO viajan aquí: mandarlas a
+                # None borraba cada noche la titularidad de toda la temporada.
                 "pts": _num(row.get("PTS")),
                 "fgm": _num(row.get("FGM")),
                 "fga": _num(row.get("FGA")),
