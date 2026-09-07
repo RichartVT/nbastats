@@ -8,8 +8,10 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Entorno
+# Entorno — cualquier variante, salvo el ejemplo que necesita el README
 .env
+.env.*
+!.env.example
 
 # Datos — nunca versionar el dataset ni los volcados
 data/raw/
@@ -19,6 +21,12 @@ data/processed/
 *.parquet
 *.csv
 
+# Volcados de la base. Ojo: *.sql NO se ignora, que db/sql/derive.sql
+# y views.sql son código del proyecto.
+*.dump
+*.sql.gz
+*.backup
+
 # Node / frontend
 node_modules/
 web/dist/
@@ -27,8 +35,12 @@ web/.vite/
 # macOS
 .DS_Store
 
-# Configuración personal de Claude Code (settings.json sí se versiona)
-.claude/settings.local.json
+# Editores
+.vscode/
+.idea/
+
+# Configuración de mis herramientas locales, no del proyecto
+.claude/
 
 # Registros de las descargas largas (ingest-pbp y compañía).
 *.log

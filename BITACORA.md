@@ -11,7 +11,7 @@ parezca haber acertado siempre.
 Documentos hermanos:
 - [`README.md`](README.md) — cómo levantar y usar el proyecto
 - [`CAPABILITIES.md`](CAPABILITIES.md) — qué preguntas se pueden contestar
-- Plan original: `~/.claude/plans/hola-te-cuento-quiero-glittery-starfish.md`
+- El plan original vive fuera del repositorio, en mi máquina.
 
 ---
 
@@ -2102,8 +2102,8 @@ no hay dónde usarlo.
 
 ## Fase 26 — La titularidad se borraba sola cada noche
 
-Un subagente revisor de la capa PostgreSQL (`.claude/agents/database-reviewer.md`,
-solo lectura: sin `Edit`, sin `Write`, sin `Bash`) encontró un fallo que la suite
+Un subagente revisor de la capa PostgreSQL, de solo lectura por construcción
+(sin `Edit`, sin `Write`, sin `Bash`; no está versionado), encontró un fallo que la suite
 de 513 tests no podía ver, porque no es un error de cálculo sino de **propiedad
 de las columnas**.
 

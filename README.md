@@ -134,3 +134,12 @@ Uso personal y educativo. No redistribuir los datos crudos.
 
 3. **Los minutos se guardan en segundos.** La fuente los da como `"34:12"` y a
    veces como `"34.000000:12"`. Se normalizan una sola vez, en la ingesta.
+
+## Licencia
+
+El **código** está bajo licencia [MIT](LICENSE).
+
+Los **datos** no. Provienen de `stats.nba.com`, no están cubiertos por la
+licencia MIT y este repositorio no los redistribuye: no hay ni un box score
+versionado aquí. Para tener datos hay que descargarlos con los comandos de
+ingesta, y ese uso es personal y educativo.
