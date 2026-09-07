@@ -372,7 +372,10 @@ export function ForecastPage() {
   if (!ratings.data) return <Loading />
 
   const maxNeto = Math.max(...equipos.map((t) => Math.abs(t.net)), 1)
-  const dias = ['0', '1', '2', '3', '4'].map((d) => ({ value: d, label: `${d} días` }))
+  const dias = ['0', '1', '2', '3', '4'].map((d) => ({
+    value: d,
+    label: `${d} ${d === '1' ? 'día' : 'días'}`,
+  }))
 
   return (
     <div className="space-y-6">
