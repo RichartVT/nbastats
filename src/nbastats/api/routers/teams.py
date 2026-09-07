@@ -307,7 +307,7 @@ def ratings(season: str | None = Query(None), db: Session = Depends(get_db)) -> 
         "note": (
             "Puntos por 100 posesiones respecto a la media de la liga. La defensa "
             "va en positivo: más alto es mejor. Los efectos de equipo están "
-            "centrados en cero, así que la media de la liga la absorbe `league_mean`."
+            "centrados en cero, y el resto se ajusta respecto a la media de la liga."
         ),
         "teams": [
             {
