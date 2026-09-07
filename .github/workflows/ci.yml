@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # --locked fails if uv.lock is out of sync with pyproject.toml, so CI
+      # tests the dependency set that is actually committed.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # No PostgreSQL service on purpose. Only 10 of the 534 tests touch the
+      # database, and they query materialized views over the ingested dataset,
+      # which CI cannot have: ingestion takes hours and stats.nba.com drops
+      # datacenter IPs. Those tests skip cleanly when there is no connection.
+      - name: Test
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend (Node 22)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
