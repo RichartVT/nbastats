@@ -83,7 +83,12 @@ def _chunked(rows: Sequence[dict], size: int = CHUNK_SIZE) -> Iterable[Sequence[
 
 
 def upsert(
-    session: Session, model: type, rows: Sequence[dict], *, keys: Sequence[str]
+    session: Session,
+    model: type,
+    rows: Sequence[dict],
+    *,
+    keys: Sequence[str],
+    solo_al_insertar: Sequence[str] = (),
 ) -> int:
     """Inserta o actualiza por lotes.
 
@@ -98,6 +103,12 @@ def upsert(
     conferencia (teams.py) y las cuatro derivadas de derive.sql. El daño no se
     veía porque el dato se recargaba entero cada noche y volvía a NULL: la
     columna nunca llegaba a estar mal, simplemente estaba vacía.
+
+    `solo_al_insertar` es para la columna que aquí se SIEMBRA pero no se posee:
+    viaja en el INSERT porque la fila nueva no puede nacer sin ella, y se queda
+    fuera del UPDATE para no pisar a su dueño en las recargas. El caso es
+    `ot_periods`: aquí sale de dividir los minutos entre 5, y summaries.py lo
+    trae exacto de la fuente.
     """
     if not rows:
         return 0
@@ -105,10 +116,11 @@ def upsert(
     # La unión de todas las filas, no las claves de la primera: un constructor
     # puede omitir una clave opcional en algunas filas y no en otras.
     presentes = {clave for fila in rows for clave in fila}
+    sembradas = set(solo_al_insertar)
     updatable = [
         c.name
         for c in model.__table__.columns
-        if c.name not in keys and c.name in presentes
+        if c.name not in keys and c.name in presentes and c.name not in sembradas
     ]
 
     for chunk in _chunked(rows):
@@ -592,7 +604,12 @@ def ingest_season(
         ensure_season(session, season)
         result.players_seen = ensure_players(session, player_base)
 
-        result.games = upsert(session, Game, juegos, keys=["game_id"])
+        # `ot_periods` se siembra y no se posee: la heurística de aquí evita
+        # que un partido nuevo nazca sin valor, pero el exacto lo pone
+        # summaries.py y no se puede pisar cada noche.
+        result.games = upsert(
+            session, Game, juegos, keys=["game_id"], solo_al_insertar=["ot_periods"]
+        )
         result.team_rows = upsert(
             session,
             TeamGameStats,

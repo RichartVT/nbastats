@@ -20,11 +20,12 @@ import inspect
 
 from sqlalchemy.dialects import postgresql
 
-from nbastats.db.models import PlayerGameStats, Season
+from nbastats.db.models import Game, PlayerGameStats, Season
 from nbastats.ingest.bulk import (
     _build_games,
     _build_player_stats,
     _build_team_stats,
+    ingest_season,
     upsert,
 )
 
@@ -184,3 +185,45 @@ def test_existe_el_comando_ingest_starters():
 
     nombres = {c.name for c in app.registered_commands}
     assert "ingest-starters" in nombres
+
+
+def test_columna_sembrada_entra_en_el_insert_pero_no_en_el_update():
+    """`ot_periods` la siembra bulk.py y la posee summaries.py.
+
+    Tiene que viajar en el INSERT —es NOT NULL, la fila nueva no puede nacer
+    sin ella— y quedarse fuera del SET, o la recarga nocturna volvería a pisar
+    el valor exacto de la fuente con la heurística de dividir minutos entre 5.
+    """
+    sesion = _SesionFalsa()
+    upsert(
+        sesion,
+        Game,
+        [{"game_id": "0022300001", "season_id": "2023-24", "ot_periods": 1}],
+        keys=["game_id"],
+        solo_al_insertar=["ot_periods"],
+    )
+    sql = _sql(sesion)
+
+    antes, despues = sql.split("DO UPDATE SET")
+    assert "ot_periods" in antes, "debe insertarse"
+    assert "ot_periods" not in despues, "no debe actualizarse"
+    assert "season_id" in despues, "las demás sí se actualizan"
+
+
+def test_sin_solo_al_insertar_la_columna_si_se_actualiza():
+    """El guarda del guarda: sin el parámetro, el comportamiento es el de antes."""
+    sesion = _SesionFalsa()
+    upsert(
+        sesion,
+        Game,
+        [{"game_id": "0022300001", "season_id": "2023-24", "ot_periods": 1}],
+        keys=["game_id"],
+    )
+    assert "ot_periods" in _sql(sesion).split("DO UPDATE SET")[1]
+
+
+def test_bulk_protege_ot_periods_al_recargar():
+    """Que el parámetro esté puesto en la llamada real, no solo disponible."""
+    fuente = inspect.getsource(ingest_season)
+    assert "solo_al_insertar" in fuente
+    assert "ot_periods" in fuente
