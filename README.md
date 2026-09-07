@@ -8,14 +8,14 @@ de la fuente a la pantalla y que mide cuánta confianza merece cada número.
 [![CI](https://github.com/RichartVT/nbastats/actions/workflows/ci.yml/badge.svg)](https://github.com/RichartVT/nbastats/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-![Ficha de Luka Dončić: promedios de la temporada con su puesto en la liga y los últimos cinco partidos](docs/images/player-profile.webp)
-
 | | |
 |---|---|
 | **5 temporadas · 6.602 partidos** | de 2021-22 a 2025-26, temporada regular, play-in y playoffs |
 | **3,25 M+ eventos play-by-play** | el detalle jugada a jugada, no solo el box score |
 | **65,8 % de acierto** | pronóstico evaluado sobre 4.906 partidos fuera de muestra |
 | **534 tests automatizados** | backend y frontend verificados por separado en CI |
+
+![Ficha de Luka Dončić: promedios de la temporada con su puesto en la liga y los últimos cinco partidos](docs/images/player-profile.webp)
 
 ## Qué hace
 
