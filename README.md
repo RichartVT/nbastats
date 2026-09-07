@@ -8,7 +8,7 @@ de la fuente a la pantalla y que mide cuánta confianza merece cada número.
 [![CI](https://github.com/RichartVT/nbastats/actions/workflows/ci.yml/badge.svg)](https://github.com/RichartVT/nbastats/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-<!-- Hero screenshot will be added in P0.3 -->
+![Ficha de Luka Dončić: promedios de la temporada con su puesto en la liga y los últimos cinco partidos](docs/images/player-profile.webp)
 
 | | |
 |---|---|
@@ -49,6 +49,13 @@ que le da forma, es **saber cuándo ese número aguanta y cuándo no**:
 Y cuando algo se probó y no funcionó, está documentado como resultado negativo
 en vez de desaparecer del historial.
 
+![Tabla de estabilidad: partidos necesarios para creerse cada métrica, clasificados
+entre habilidad y azar](docs/images/stability.webp)
+
+> `k` estima cuántos partidos necesita una métrica para separar señal de ruido:
+> ~3 para el volumen de triples propios y ~150 para el porcentaje de triples
+> permitido al rival.
+
 ## Pronóstico de partidos
 
 Modelo de probabilidad de victoria con ratings de equipo ajustados por rival,
@@ -76,6 +83,12 @@ confianza que el modelo expresó:
 consistente con un mayor acierto observado.** Por eso la evaluación no se limita
 al porcentaje de aciertos: una probabilidad solo sirve para algo más que ordenar
 partidos si además se puede contrastar con la frecuencia observada.
+
+![Simulador de partido: probabilidad de victoria, margen esperado y desglose de
+factores](docs/images/forecast.webp)
+
+> El simulador publica por separado las dos rutas del modelo —logística y margen—
+> para poder ver si discrepan.
 
 Dos apuntes de contexto, medidos y no supuestos:
 
