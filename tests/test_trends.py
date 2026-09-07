@@ -79,7 +79,13 @@ class TestAnalyzeTrend:
         assert falsos <= 5, f"{falsos}/60 falsos positivos: demasiados"
 
     def test_pendiente_por_temporada_es_coherente(self):
-        serie = np.linspace(20.0, 10.0, 82).tolist()  # -10 en exactamente 82
+        # Con ruido, y no una recta exacta. Una recta perfecta deja residuos del
+        # orden de 1e-15, y si la plataforma los redondea a cero el `stderr` de
+        # la regresión vale 0 y `analyze_trend` devuelve INDETERMINADA — que es
+        # justo lo que debe hacer con una serie sin variación. El test pasaba en
+        # macOS y fallaba en Linux por ese redondeo, no por la pendiente.
+        rng = np.random.default_rng(5)
+        serie = (np.linspace(20.0, 10.0, 82) + rng.normal(0, 0.05, 82)).tolist()
         res = analyze_trend(serie)
         assert res.slope_per_season == pytest.approx(-10.0, abs=0.5)
         assert res.slope_per_game * GAMES_PER_SEASON == pytest.approx(
