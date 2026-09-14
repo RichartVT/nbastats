@@ -792,6 +792,97 @@ class TeamStanding(Base):
     diff_points_pg: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
 
 
+class ScheduledGame(Base):
+    """El calendario: los partidos ANUNCIADOS de una temporada.
+
+    Vive aparte de `games` a propósito, y la diferencia no es de forma sino de
+    naturaleza: `games` son hechos consumados y esto son promesas. Una promesa
+    se aplaza, cambia de pabellón y a veces ni siquiera sabe todavía quién la
+    va a jugar.
+
+    Tres consecuencias de haberlo mezclado que se evitan teniéndolo separado:
+
+    1. `summaries.py`, `starters.py` y `playbyplay.py` eligen qué pedir con un
+       `SELECT game_id FROM games` filtrado por "no tiene datos todavía". Un
+       partido de marzo cumple ese filtro desde hoy, así que cada pasada diaria
+       intentaría descargar el resumen, la titularidad y el play-by-play de
+       ~1.200 partidos que aún no se han jugado.
+    2. `derive.sql` toma `MAX(game_date_local) FROM games` como fin de
+       temporada, que es el límite de la ventana de ausencias. Con el calendario
+       dentro pasaría a ser abril desde el primer día y el índice de ausencias
+       saldría inflado toda la temporada.
+    3. `dataset_counts` publica `COUNT(*) FROM games` en la portada como
+       "N partidos". Son los jugados, no los prometidos.
+
+    **La pretemporada no se guarda.** Es coherente con `derive.sql`, que ya la
+    excluye del descanso, del récord previo y del índice de ausencias.
+
+    Cuando un partido se juega, su fila NO se borra: `games` recibe el
+    resultado y esta tabla sigue siendo el calendario. Comparten `game_id`, así
+    que el LEFT JOIN entre las dos es lo que permite pintar una temporada
+    entera con los resultados donde los hay y la fecha donde todavía no.
+    """
+
+    __tablename__ = "scheduled_games"
+    __table_args__ = (
+        Index("ix_sched_season_date", "season_id", "game_date_local"),
+        Index("ix_sched_home", "home_team_id", "game_date_local"),
+        Index("ix_sched_away", "away_team_id", "game_date_local"),
+    )
+
+    game_id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    season_id: Mapped[str] = mapped_column(
+        String(7), ForeignKey("seasons.season_id"), index=True
+    )
+
+    # NULLABLE, al revés que en `games`. El id de un partido codifica su tipo,
+    # pero la final de la NBA Cup usa el tipo '6' y el All-Star el '3', y
+    # ninguno de los dos es una fase de la temporada. Van en el calendario
+    # igualmente —se juegan, y la gente los busca— con el tipo sin resolver y
+    # la etiqueta diciendo cuál es.
+    season_type: Mapped[SeasonType | None] = mapped_column(
+        Enum(
+            SeasonType,
+            name="season_type",
+            native_enum=True,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        index=True,
+    )
+
+    game_date_local: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    tipoff_utc: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # NULLABLE, también al revés que en `games`: los cruces de la NBA Cup se
+    # publican con los dos equipos por determinar y se rellenan en diciembre.
+    # La fuente los manda como `teamId: 0`, que no es un equipo sino un hueco.
+    home_team_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("teams.team_id")
+    )
+    away_team_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("teams.team_id")
+    )
+
+    arena_name: Mapped[str | None] = mapped_column(String(100))
+    arena_city: Mapped[str | None] = mapped_column(String(60))
+    is_neutral_site: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+
+    # Mismos anchos que en `games`: son el mismo dato de la misma fuente.
+    game_label: Mapped[str | None] = mapped_column(String(60))
+    game_sublabel: Mapped[str | None] = mapped_column(String(40))
+
+    week_number: Mapped[int | None] = mapped_column(SmallInteger)
+    # 1 = programado, 2 = en juego, 3 = terminado. Tal cual lo da la fuente.
+    game_status: Mapped[int | None] = mapped_column(SmallInteger)
+    # 'N' = no aplazado. La fuente usa una letra, no un booleano.
+    postponed_status: Mapped[str | None] = mapped_column(String(4))
+
+    home_team: Mapped[Team | None] = relationship(foreign_keys=[home_team_id])
+    away_team: Mapped[Team | None] = relationship(foreign_keys=[away_team_id])
+
+
 class IngestLog(Base):
     """Auditoría de ingesta: permite reanudar, depurar y verificar idempotencia."""
 

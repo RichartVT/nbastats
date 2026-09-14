@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     )
 
     database_url: str = "postgresql+psycopg://nbastats:nbastats@localhost:5433/nbastats"
-    seasons: str = "2021-22,2022-23,2023-24,2024-25,2025-26"
+    seasons: str = "2021-22,2022-23,2023-24,2024-25,2025-26,2026-27"
 
     nba_api_delay_seconds: float = 0.7
     nba_api_timeout_seconds: int = 30

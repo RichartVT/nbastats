@@ -150,6 +150,60 @@ def get_team_games(
     return [dict(f) for f in filas]
 
 
+def get_team_schedule(
+    session: Session,
+    team_id: int,
+    season: str | None = None,
+    *,
+    upcoming_only: bool = False,
+) -> list[dict]:
+    """Calendario de un equipo, del primer partido al último.
+
+    Al revés que `get_team_games`, que va del más reciente hacia atrás: un
+    historial se lee empezando por lo último y un calendario por lo siguiente.
+
+    Sale de `scheduled_games` y no del historial porque en octubre el historial
+    está vacío — es justo cuando el calendario es lo único que hay que enseñar.
+    El LEFT JOIN a `games` trae el resultado de los que ya se jugaron, así que
+    una misma tabla sirve para toda la temporada: resultados donde los hay,
+    fecha y hora donde todavía no.
+
+    El rival puede venir NULL y eso no es un fallo: los cruces de la NBA Cup se
+    publican en agosto con los dos equipos por determinar.
+    """
+    filtro_futuro = " AND s.game_date_local >= CURRENT_DATE" if upcoming_only else ""
+    sql = text(f"""
+        SELECT s.game_id,
+               s.game_date_local AS date,
+               s.season_id,
+               COALESCE(s.season_type::text, 'regular') AS season_type,
+               s.tipoff_utc,
+               s.game_label, s.game_sublabel,
+               s.arena_name, s.arena_city, s.is_neutral_site,
+               (s.home_team_id = :tid) AS is_home,
+               opp.team_id      AS opponent_id,
+               opp.abbreviation AS opponent,
+               opp.full_name    AS opponent_name,
+               -- Jugado o no, según lo diga `games` y no el calendario: el
+               -- `game_status` de la fuente se queda desactualizado entre
+               -- pasadas, mientras que la existencia de un resultado no.
+               (g.game_id IS NOT NULL) AS played,
+               CASE WHEN s.home_team_id = :tid THEN g.home_pts ELSE g.away_pts END AS pts,
+               CASE WHEN s.home_team_id = :tid THEN g.away_pts ELSE g.home_pts END AS opp_pts
+        FROM scheduled_games s
+        LEFT JOIN teams opp
+               ON opp.team_id = CASE WHEN s.home_team_id = :tid
+                                     THEN s.away_team_id ELSE s.home_team_id END
+        LEFT JOIN games g ON g.game_id = s.game_id
+        WHERE (s.home_team_id = :tid OR s.away_team_id = :tid)
+          AND s.season_id = COALESCE(
+                :season, (SELECT MAX(season_id) FROM scheduled_games)){filtro_futuro}
+        ORDER BY s.game_date_local, s.game_id
+    """)
+    filas = session.execute(sql, {"tid": team_id, "season": season}).mappings()
+    return [dict(f) for f in filas]
+
+
 # =========================================================================
 # Clasificación
 # =========================================================================

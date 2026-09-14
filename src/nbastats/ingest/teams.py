@@ -8,8 +8,11 @@ Tres piezas, todas baratas:
   temporadas, no solo la actual: sin eso, mirar a los Nuggets de 2022-23
   mostraría la plantilla de 2025-26, que es justo lo contrario de lo que sirve
   para analizar una temporada pasada.
+  Una plantilla, además, **siembra** al jugador que todavía no está en la
+  base: es la única fuente que conoce a un fichaje antes de su primer partido.
 - **Clasificación** (`LeagueStandingsV3`): 1 petición por temporada, con
-  `PlayoffRank` ya resuelto y los desempates oficiales aplicados.
+  `PlayoffRank` ya resuelto y los desempates oficiales aplicados. No se guarda
+  la de una temporada que aún no ha empezado.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from typing import Any
 
 from nbastats.db.models import IngestLog, Player, Team, TeamSeasonRoster, TeamStanding
 from nbastats.db.session import session_scope
-from nbastats.ingest.bulk import upsert
+from nbastats.ingest.bulk import ensure_players, upsert
 from nbastats.ingest.nba_client import NBAClient
 
 logger = logging.getLogger(__name__)
@@ -132,9 +135,10 @@ def ingest_rosters(
     client = client or NBAClient()
     equipos = NBAClient.static_teams()
 
-    total = omitidos = 0
+    total = nuevos = 0
     for season in seasons:
         filas: list[dict] = []
+        nombres: dict[int, str] = {}
         for equipo in equipos:
             try:
                 bloques = client.team_roster(equipo["id"], season)
@@ -148,6 +152,9 @@ def ingest_rosters(
                 player_id = _int_or_none(jugador.get("PLAYER_ID"))
                 if player_id is None:
                     continue
+                # El nombre no es columna de `team_season_rosters`: viaja
+                # aparte para poder sembrar al jugador que aún no existe.
+                nombres[player_id] = (jugador.get("PLAYER") or "").strip()
                 filas.append(
                     {
                         "season_id": season,
@@ -160,14 +167,33 @@ def ingest_rosters(
                     }
                 )
 
-        # Las plantillas incluyen jugadores que nunca llegaron a disputar un
-        # partido (dos vías, contratos de 10 días que no debutaron), y esos no
-        # están en `players`. Se descartan en vez de inventar filas de jugador:
-        # una plantilla es un dato de contexto, no una fuente de jugadores.
-        filas, descartados = _solo_jugadores_conocidos(filas)
-        omitidos += descartados
-
         with session_scope() as session:
+            # LA PLANTILLA SIEMBRA AL JUGADOR. Antes se descartaba la ficha de
+            # quien no estuviera ya en `players`, con el argumento de que una
+            # plantilla es contexto y no una fuente de jugadores. Eso vale
+            # mirando hacia atrás y falla mirando hacia delante: en una
+            # temporada que aún no ha empezado, los fichajes que más importan
+            # —los novatos del draft y los que llegan de otras ligas— no han
+            # jugado un solo partido NBA, así que descartarlos deja la
+            # plantilla nueva sin la mitad interesante.
+            #
+            # Se crea la fila mínima (id y nombre) con el mismo helper que usa
+            # la carga de box scores; `ingest-bios` la completa después, porque
+            # selecciona justo por `birthdate IS NULL`.
+            #
+            # No ensucia la aplicación: el listado de jugadores se construye
+            # sobre `mv_player_season`, así que quien no ha jugado no aparece
+            # en las búsquedas — solo en la plantilla de su equipo, que es
+            # exactamente donde se le espera.
+            nuevos += _cuantos_no_existian(session, set(nombres))
+            ensure_players(
+                session,
+                [
+                    {"PLAYER_ID": pid, "PLAYER_NAME": nombre}
+                    for pid, nombre in nombres.items()
+                    if nombre
+                ],
+            )
             total += upsert(
                 session,
                 TeamSeasonRoster,
@@ -176,26 +202,7 @@ def ingest_rosters(
             )
         logger.info("Plantillas %s: %d jugadores", season, len(filas))
 
-    if omitidos:
-        logger.info(
-            "%d fichas de plantilla omitidas: jugadores sin ningún partido disputado",
-            omitidos,
-        )
-    return {"filas": total, "omitidos": omitidos}
-
-
-def _solo_jugadores_conocidos(filas: list[dict]) -> tuple[list[dict], int]:
-    if not filas:
-        return [], 0
-    from sqlalchemy import select
-
-    ids = {f["player_id"] for f in filas}
-    with session_scope() as session:
-        conocidos = set(
-            session.scalars(select(Player.player_id).where(Player.player_id.in_(ids))).all()
-        )
-    validas = [f for f in filas if f["player_id"] in conocidos]
-    return validas, len(filas) - len(validas)
+    return {"filas": total, "jugadores_nuevos": nuevos}
 
 
 # =========================================================================
@@ -242,6 +249,20 @@ def ingest_standings(
             if r.get("TeamID")
         ]
 
+        if not _ya_se_jugo(filas):
+            # UNA CLASIFICACIÓN SIN UN SOLO PARTIDO NO ES UNA CLASIFICACIÓN.
+            # La NBA publica los 30 equipos a 0-0 en cuanto existe la
+            # temporada, meses antes de que empiece. Guardarlos tendría un
+            # efecto desproporcionado: las consultas resuelven la temporada por
+            # defecto con `MAX(season_id) FROM team_standings`, así que la
+            # portada y la ficha de cada equipo pasarían a enseñar un 0-0 en
+            # vez del récord de la última temporada jugada.
+            #
+            # El criterio es el dato y no una fecha escrita a mano: en cuanto
+            # se juegue el primer partido, la clasificación entra sola.
+            logger.info("Clasificación %s: todavía no se ha jugado nada", season)
+            continue
+
         with session_scope() as session:
             total += upsert(
                 session, TeamStanding, filas, keys=["season_id", "team_id"]
@@ -250,6 +271,28 @@ def ingest_standings(
 
     _backfill_conference()
     return total
+
+
+def _cuantos_no_existian(session, ids: set[int]) -> int:  # noqa: ANN001
+    """Cuántos de estos jugadores no estaban todavía en la base.
+
+    Se cuenta ANTES de sembrarlos porque es el número que interesa informar:
+    cuántas fichas nuevas quedan pendientes de biografía. El upsert devuelve
+    cuántas filas tocó, que son todas.
+    """
+    if not ids:
+        return 0
+    from sqlalchemy import select
+
+    conocidos = set(
+        session.scalars(select(Player.player_id).where(Player.player_id.in_(ids))).all()
+    )
+    return len(ids - conocidos)
+
+
+def _ya_se_jugo(filas: list[dict]) -> bool:
+    """¿Ha jugado alguien algún partido en esta temporada?"""
+    return any((f.get("wins") or 0) + (f.get("losses") or 0) > 0 for f in filas)
 
 
 def _backfill_conference() -> None:
@@ -302,6 +345,6 @@ def ingest_all_team_data(seasons: list[str]) -> dict[str, int]:
     return {
         "equipos": detalles,
         "plantillas": plantillas["filas"],
-        "plantillas_omitidas": plantillas["omitidos"],
+        "jugadores_nuevos": plantillas["jugadores_nuevos"],
         "clasificacion": clasificacion,
     }

@@ -4,7 +4,8 @@ import type {
   StabilityTable,
   Backtest, Catalog, GameDetail, HeadToHead, LeadersResponse, Player, PlayerFilters,
   PlayerListResponse, PlayerRanks, PlayerSeason, RecentGame, SplitsResponse,
-  Prediction, RatingsResponse, Standing, Team, TeamGame, TeamSplits, TeamSummary,
+  Prediction, RatingsResponse, ScheduledGame, Standing, Team, TeamGame, TeamSplits,
+  TeamSummary,
   TeamTrend, Trend,
 } from './types'
 
@@ -72,6 +73,8 @@ export const api = {
       ...(seasons?.length ? { seasons: seasons.join(',') } : {}),
       ...(limit ? { limit } : {}),
     }),
+  teamSchedule: (id: number, season?: string) =>
+    get<ScheduledGame[]>(`/teams/${id}/schedule`, season ? { season } : {}),
   standings: (season?: string) =>
     get<Standing[]>('/standings', season ? { season } : {}),
   headToHead: (a: number, b: number) => get<HeadToHead>(`/teams/${a}/vs/${b}`),

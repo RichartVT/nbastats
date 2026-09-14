@@ -515,6 +515,32 @@ class TeamGameOut(BaseModel):
     ts_pct: float | None = None
 
 
+class ScheduledGameOut(BaseModel):
+    """Un partido del calendario, se haya jugado ya o no.
+
+    `played` distingue los dos estados, y de él depende qué campos vienen
+    rellenos: sin jugar no hay marcador, y en los cruces de la NBA Cup que aún
+    no tienen contendientes tampoco hay hora de salto inicial.
+    """
+
+    game_id: str
+    date: dt.date
+    season_id: str
+    game_type: GameTypeOut
+    # Puede faltar: la NBA publica el día mucho antes que la hora.
+    tipoff_utc: dt.datetime | None = None
+    opponent: str | None = None
+    opponent_id: int | None = None
+    opponent_name: str | None = None
+    is_home: bool
+    is_neutral_site: bool
+    arena_name: str | None = None
+    arena_city: str | None = None
+    played: bool
+    pts: int | None = None
+    opp_pts: int | None = None
+
+
 class StandingOut(BaseModel):
     team_id: int
     abbreviation: str

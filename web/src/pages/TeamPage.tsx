@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { SplitsCard, TrendCard } from '../components/AnalysisSection'
 import { GameHistory } from '../components/GameHistory'
+import { TeamSchedule } from '../components/TeamSchedule'
 import { Card, ErrorBox, Loading, Select } from '../components/Layout'
 import { PlayerPhoto, TeamLogo } from '../components/Media'
 import { fmt, fmtSigned } from '../lib/format'
@@ -73,6 +74,11 @@ export function TeamPage() {
   const partidos = useQuery({
     queryKey: ['teamGames', teamId, season],
     queryFn: () => api.teamGames(teamId, [season]),
+    placeholderData: (prev) => prev,
+  })
+  const calendario = useQuery({
+    queryKey: ['teamSchedule', teamId, season],
+    queryFn: () => api.teamSchedule(teamId, season),
     placeholderData: (prev) => prev,
   })
 
@@ -211,19 +217,41 @@ export function TeamPage() {
         </div>
       </Card>
 
-      {/* --- Historial de partidos --- */}
+      {/* --- Calendario ---
+          Va ANTES del historial y no después: en octubre el historial está
+          vacío y esto es lo único que hay que enseñar. Los 82 partidos de un
+          equipo se publican en agosto salvo dos, que dependen de cómo le vaya
+          en la NBA Cup y se anuncian en diciembre. */}
       <Card
-        title={`Partidos ${season}`}
-        subtitle="Incluye playoffs, play-in y NBA Cup. Haz clic en un partido para ver todo."
+        title={`Calendario ${season}`}
+        subtitle={
+          calendario.data && calendario.data.length < 82
+            ? `${calendario.data.length} partidos publicados; los que faltan dependen de la NBA Cup`
+            : 'Hora en tu zona horaria'
+        }
       >
-        {partidos.error ? (
-          <ErrorBox error={partidos.error} />
-        ) : !partidos.data ? (
+        {calendario.error ? (
+          <ErrorBox error={calendario.error} />
+        ) : !calendario.data ? (
           <Loading />
         ) : (
-          <GameHistory games={partidos.data} />
+          <TeamSchedule games={calendario.data} />
         )}
       </Card>
+
+      {/* --- Historial de partidos ---
+          Solo cuando hay partidos jugados. Con una temporada recién empezada,
+          la tabla de filtros vacía no informa de nada: el calendario de arriba
+          ya dice lo que hay. */}
+      {partidos.data && partidos.data.length > 0 && (
+        <Card
+          title={`Partidos ${season}`}
+          subtitle="Incluye playoffs, play-in y NBA Cup. Haz clic en un partido para ver todo."
+        >
+          <GameHistory games={partidos.data} />
+        </Card>
+      )}
+      {partidos.error && <ErrorBox error={partidos.error} />}
 
       {/* --- Análisis del equipo --- */}
       <div className="flex flex-wrap items-center gap-4 pt-2">

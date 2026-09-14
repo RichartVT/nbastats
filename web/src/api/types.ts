@@ -254,6 +254,30 @@ export interface TeamGame {
   ts_pct: number | null
 }
 
+/**
+ * Un partido del calendario, se haya jugado ya o no.
+ *
+ * `played` decide qué viene relleno: sin jugar no hay marcador, y la NBA
+ * publica el día mucho antes que la hora, así que `tipoff_utc` puede faltar.
+ */
+export interface ScheduledGame {
+  game_id: string
+  date: string
+  season_id: string
+  game_type: GameType
+  tipoff_utc: string | null
+  opponent: string | null
+  opponent_id: number | null
+  opponent_name: string | null
+  is_home: boolean
+  is_neutral_site: boolean
+  arena_name: string | null
+  arena_city: string | null
+  played: boolean
+  pts: number | null
+  opp_pts: number | null
+}
+
 export interface Standing {
   team_id: number
   abbreviation: string

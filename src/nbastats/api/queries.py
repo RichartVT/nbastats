@@ -161,9 +161,26 @@ def latest_season(session: Session) -> str:
 
 
 def list_seasons(session: Session) -> list[str]:
-    """Temporadas con partidos, de la más reciente a la más antigua."""
+    """Temporadas consultables, de la más reciente a la más antigua.
+
+    No son solo las que tienen partidos jugados. Una temporada empieza a ser
+    consultable en cuanto hay ALGO que enseñar de ella, y en verano eso son las
+    plantillas y el calendario: los fichajes se anuncian en julio y la NBA
+    publica el calendario en agosto, dos meses antes del primer partido.
+
+    Si esto siguiera saliendo solo de `mv_player_season`, la temporada nueva no
+    aparecería en ningún selector —ni para ver una plantilla ni para ver el
+    calendario— hasta octubre, que es justo cuando deja de hacer falta.
+    """
     filas = session.execute(
-        text("SELECT DISTINCT season_id FROM mv_player_season ORDER BY season_id DESC")
+        text("""
+            SELECT season_id FROM mv_player_season
+            UNION
+            SELECT season_id FROM team_season_rosters
+            UNION
+            SELECT season_id FROM scheduled_games
+            ORDER BY season_id DESC
+        """)
     ).scalars().all()
     return list(filas)
 

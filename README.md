@@ -222,6 +222,7 @@ uv run nbastats ingest-seasons    # box scores, 5 temporadas (~3 min)
 uv run nbastats enrich            # hora de inicio y sedes neutrales (~10 min)
 uv run nbastats ingest-bios       # ficha de jugador: nacimiento, dorsal... (~12 min)
 uv run nbastats ingest-teams      # fichas, plantillas y clasificación (~3 min)
+uv run nbastats ingest-schedule   # calendario: 1 petición por temporada
 uv run nbastats refresh           # columnas derivadas y vistas
 uv run nbastats status            # ver qué hay cargado
 ```

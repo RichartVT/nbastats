@@ -349,6 +349,27 @@ class NBAClient:
         payload = self._call_raw(playbyplayv3.PlayByPlayV3, game_id=game_id)
         return (payload.get("game") or {}).get("actions") or []
 
+    def league_schedule(self, season: str) -> dict:
+        """Calendario completo de una temporada, en UNA petición.
+
+        Devuelve el bloque `leagueSchedule` tal cual: `gameDates[].games[]`, un
+        JSON anidado que no pasa por `_extract_rows` — por eso usa `_call_raw`,
+        igual que `game_summary` y por el mismo motivo.
+
+        Trae ya resueltos, y sin coste adicional, los tres datos que a los
+        partidos jugados les cuesta una petición por FECHA en `enrich`: el salto
+        inicial en UTC, la sede neutral y la etiqueta del partido.
+
+        Se publica en agosto, así que el calendario de la temporada siguiente
+        está disponible mucho antes de que empiece.
+        """
+        from nba_api.stats.endpoints import scheduleleaguev2
+
+        payload = self._call_raw(
+            scheduleleaguev2.ScheduleLeagueV2, season=season, league_id="00"
+        )
+        return payload.get("leagueSchedule") or {}
+
     def standings(self, season: str, season_type: str = "Regular Season") -> list[dict]:
         """Clasificación oficial, con los desempates de la NBA ya aplicados.
 

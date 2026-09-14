@@ -25,6 +25,7 @@ from nbastats.api.schemas import (
     PredictionOut,
     RatingsOut,
     RosterEntryOut,
+    ScheduledGameOut,
     SplitOut,
     StandingOut,
     TeamCatalogOut,
@@ -98,6 +99,31 @@ def get_team_games(
     entera, no solo la fase regular.
     """
     return [_to_team_game(f) for f in tq.get_team_games(db, team_id, seasons, limit=limit)]
+
+
+@router.get("/teams/{team_id}/schedule", response_model=list[ScheduledGameOut])
+def get_team_schedule(
+    team_id: int,
+    season: str | None = SeasonQuery,
+    upcoming_only: bool = Query(False, description="Solo de hoy en adelante"),
+    db: Session = Depends(get_db),
+) -> list[ScheduledGameOut]:
+    """Calendario del equipo, del primer partido al último.
+
+    Es lo único que tiene algo que enseñar antes de que empiece la temporada:
+    en octubre el historial está vacío y esto ya trae los 80 y pico partidos
+    anunciados, con su fecha, su rival y su etiqueta.
+
+    Los ya jugados vienen con `played` a true y su marcador, así que la misma
+    lista sirve de calendario en septiembre y de temporada en curso en marzo.
+    """
+    return [
+        ScheduledGameOut(game_type=_game_type(f), **{
+            k: v for k, v in f.items()
+            if k in ScheduledGameOut.model_fields and k != "game_type"
+        })
+        for f in tq.get_team_schedule(db, team_id, season, upcoming_only=upcoming_only)
+    ]
 
 
 @router.get("/teams/{team_id}/roster", response_model=list[RosterEntryOut])

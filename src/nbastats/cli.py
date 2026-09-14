@@ -5,6 +5,7 @@
     uv run nbastats ingest-seasons        # carga histórica completa
     uv run nbastats ingest-bios           # ficha de jugador (nacimiento, dorsal…)
     uv run nbastats ingest-teams          # fichas, plantillas y clasificación
+    uv run nbastats ingest-schedule       # calendario (1 petición por temporada)
     uv run nbastats enrich                # hora de inicio, sede y tipo de partido
     uv run nbastats ingest-periods        # box score por cuarto (masivo, ~5 min)
     uv run nbastats ingest-summaries      # resumen por partido (uno a uno, ~1,3 h)
@@ -397,11 +398,36 @@ def ingest_teams_cmd(
         f"[green]{r['equipos']} fichas · {r['plantillas']:,} fichas de plantilla · "
         f"{r['clasificacion']} filas de clasificación[/green]"
     )
-    if r["plantillas_omitidas"]:
+    if r["jugadores_nuevos"]:
         console.print(
-            f"[yellow]{r['plantillas_omitidas']} jugadores de plantilla omitidos "
-            f"(nunca disputaron un partido)[/yellow]"
+            f"[dim]{r['jugadores_nuevos']} jugadores nuevos (aún sin un partido "
+            f"disputado); lanza `ingest-bios` para completar su ficha[/dim]"
         )
+
+
+@app.command("ingest-schedule")
+def ingest_schedule_cmd(
+    seasons: str = typer.Option("", help="Coma-separadas. Vacío = las del .env"),
+    verbose: bool = False,
+) -> None:
+    """Calendario de la temporada: qué partidos vienen y cuándo.
+
+    UNA PETICIÓN POR TEMPORADA. Es lo único que tiene algo que enseñar en la
+    ficha de un equipo antes de que se juegue el primer partido.
+
+    La NBA publica el calendario en agosto, así que el de la temporada
+    siguiente se puede cargar mucho antes de que empiece. La pretemporada no se
+    guarda. Relanzarlo recoge los aplazamientos y, en diciembre, los cruces de
+    la NBA Cup, que se anuncian con los dos equipos por determinar.
+    """
+    _configurar_logging(verbose)
+    from nbastats.ingest.schedule import ingest_schedule
+
+    lista = [x.strip() for x in seasons.split(",") if x.strip()] or get_settings().season_list
+    r = ingest_schedule(lista)
+    console.print(f"[green]{r['partidos']:,} partidos en el calendario[/green]")
+    if r["fallidos"]:
+        console.print(f"[yellow]{r['fallidos']} temporadas sin calendario[/yellow]")
 
 
 @app.command()
@@ -437,6 +463,7 @@ def daily(verbose: bool = False) -> None:
     from nbastats.ingest.enrich import enrich_games
     from nbastats.ingest.periods import ingest_periods, verificar_cuadre
     from nbastats.ingest.playbyplay import ingest_play_by_play
+    from nbastats.ingest.schedule import ingest_schedule
     from nbastats.ingest.starters import ingest_starters
     from nbastats.ingest.summaries import ingest_game_summaries
     from nbastats.ingest.teams import ingest_all_team_data
@@ -451,13 +478,24 @@ def daily(verbose: bool = False) -> None:
     enriquecido = enrich_games(only_missing=True)
     console.print(f"  {enriquecido['partidos']:,} partidos enriquecidos")
 
-    bios = ingest_player_bios(only_missing=True)
-    console.print(f"  {bios['actualizados']:,} biografías nuevas")
+    # Una petición: recoge los aplazamientos y, en diciembre, los cruces de la
+    # NBA Cup, que se publican con los dos equipos por determinar.
+    calendario = ingest_schedule([season])
+    console.print(f"  {calendario['partidos']:,} partidos en el calendario")
 
+    # LAS PLANTILLAS VAN ANTES QUE LAS BIOGRAFÍAS, y el orden no es cosmético.
+    # Una plantilla siembra al jugador que todavía no ha jugado —el fichaje
+    # recién llegado, el novato del draft— y `ingest_player_bios` solo pide la
+    # ficha de los que ya están en la base. Con el orden al revés, cada fichaje
+    # nuevo se quedaba sin fecha de nacimiento, altura ni posición hasta la
+    # pasada del día siguiente.
     equipos = ingest_all_team_data([season])
     console.print(
         f"  {equipos['equipos']} fichas de equipo, {equipos['plantillas']} de plantilla"
     )
+
+    bios = ingest_player_bios(only_missing=True)
+    console.print(f"  {bios['actualizados']:,} biografías nuevas")
 
     periodos = ingest_periods([season])
     console.print(f"  {periodos['filas']:,} filas por cuarto")
