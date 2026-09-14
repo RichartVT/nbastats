@@ -135,10 +135,15 @@ def ingest_rosters(
     client = client or NBAClient()
     equipos = NBAClient.static_teams()
 
-    total = nuevos = 0
+    total = nuevos = retiradas = 0
     for season in seasons:
         filas: list[dict] = []
         nombres: dict[int, str] = {}
+        # Quién está HOY en cada equipo, solo de los equipos que contestaron y
+        # contestaron con gente. Es lo que autoriza a borrar: de un equipo que
+        # falló no se sabe nada, y no saber nada no es lo mismo que "ya no hay
+        # nadie".
+        vigentes: dict[int, set[int]] = {}
         for equipo in equipos:
             try:
                 bloques = client.team_roster(equipo["id"], season)
@@ -147,6 +152,17 @@ def ingest_rosters(
                     "Plantilla de %s %s falló: %s", equipo["abbreviation"], season, exc
                 )
                 continue
+
+            del_equipo = _ids_de_plantilla(bloques)
+            if del_equipo:
+                vigentes[equipo["id"]] = del_equipo
+            else:
+                # Un equipo sin un solo jugador es un hueco de la fuente, no una
+                # plantilla que se ha quedado vacía. Se deja como está.
+                logger.warning(
+                    "Plantilla de %s %s llegó vacía: no se limpia",
+                    equipo["abbreviation"], season,
+                )
 
             for jugador in bloques.get("CommonTeamRoster", []):
                 player_id = _int_or_none(jugador.get("PLAYER_ID"))
@@ -200,9 +216,68 @@ def ingest_rosters(
                 filas,
                 keys=["season_id", "team_id", "player_id"],
             )
-        logger.info("Plantillas %s: %d jugadores", season, len(filas))
+            retiradas += _limpiar_plantillas(session, season, vigentes)
 
-    return {"filas": total, "jugadores_nuevos": nuevos}
+        logger.info(
+            "Plantillas %s: %d jugadores%s",
+            season,
+            len(filas),
+            f", {retiradas} ficha{'s' if retiradas != 1 else ''} retirada"
+            f"{'s' if retiradas != 1 else ''}" if retiradas else "",
+        )
+
+        _derivar_equipo_actual(season, exhaustivo=len(vigentes) == len(equipos))
+
+    return {"filas": total, "jugadores_nuevos": nuevos, "retiradas": retiradas}
+
+
+def _ids_de_plantilla(bloques: dict) -> set[int]:
+    """Los `player_id` de una respuesta de `CommonTeamRoster`."""
+    ids = set()
+    for jugador in bloques.get("CommonTeamRoster", []):
+        pid = _int_or_none(jugador.get("PLAYER_ID"))
+        if pid is not None:
+            ids.add(pid)
+    return ids
+
+
+def _limpiar_plantillas(
+    session,  # noqa: ANN001
+    season: str,
+    vigentes: dict[int, set[int]],
+) -> int:
+    """Borra las fichas de quien ya no está en el equipo.
+
+    UNA PLANTILLA ES UNA FOTO, NO UN HISTORIAL, y así la publica la fuente:
+    `CommonTeamRoster` devuelve a Dončić en 2024-25 solo en los Lakers, aunque
+    empezara esa temporada en Dallas y jugara 22 partidos con ellos.
+
+    Sin esto, el upsert solo sabe añadir: en cuanto alguien cambiara de equipo
+    con la actualización diaria en marcha, se quedaría en las plantillas de los
+    dos a la vez. No se había notado porque las cinco temporadas cargadas se
+    trajeron de una sola vez, ya con los traspasos resueltos.
+
+    Quién pasó por dónde se responde con los box scores, que guardan el equipo
+    partido a partido y no necesitan nada de esto.
+
+    `vigentes` trae SOLO los equipos que contestaron con jugadores. Es la
+    diferencia entre "ya no está en el equipo" y "hoy no sabemos quién está",
+    que sin este filtro se convertirían en la misma cosa: un fallo de red
+    vaciaría la plantilla entera de ese equipo.
+    """
+    from sqlalchemy import delete
+
+    borradas = 0
+    for team_id, ids in vigentes.items():
+        res = session.execute(
+            delete(TeamSeasonRoster).where(
+                TeamSeasonRoster.season_id == season,
+                TeamSeasonRoster.team_id == team_id,
+                TeamSeasonRoster.player_id.notin_(ids),
+            )
+        )
+        borradas += res.rowcount or 0
+    return borradas
 
 
 # =========================================================================
@@ -271,6 +346,90 @@ def ingest_standings(
 
     _backfill_conference()
     return total
+
+
+def _derivar_equipo_actual(season: str, *, exhaustivo: bool) -> None:
+    """Propaga a `players` en qué equipo está cada uno, desde la plantilla.
+
+    LA PLANTILLA ES LA FUENTE, Y SALE GRATIS. `current_team_id` y
+    `roster_status` los trae `CommonPlayerInfo`, que solo se pide de los
+    jugadores a los que les falta la ficha: a uno ya cargado no se le vuelve a
+    preguntar nunca, así que ambos campos se congelaban el día de su primera
+    carga. Se veía en los datos —DeRozan figurando en Sacramento estando en
+    Denver, Klay Thompson con equipo pero marcado como agente libre— y rompía
+    el filtro por equipo y los tres filtros de estado del listado de jugadores.
+
+    Volver a pedir la ficha de los ~590 jugadores en plantilla costaría siete
+    minutos diarios para averiguar algo que la plantilla que acabamos de
+    descargar ya dice. Mismo patrón que `_backfill_conference()`: un dato que
+    otra tabla conoce mejor, propagado con un UPDATE.
+
+    Args:
+        season: de qué temporada se lee la plantilla.
+        exhaustivo: si los 30 equipos contestaron. Solo entonces se puede
+            afirmar que quien no aparece en ninguna plantilla se ha quedado sin
+            equipo; con la mitad de la liga sin responder, esa misma frase
+            marcaría como agentes libres a cientos de jugadores que sí lo
+            tienen.
+    """
+    from sqlalchemy import text as sql_text
+
+    from nbastats.db.session import get_engine
+
+    with get_engine().begin() as conn:
+        # SOLO DESDE LA TEMPORADA MÁS RECIENTE. Sin esta comprobación, un
+        # `ingest-teams --seasons 2022-23` para rellenar histórico reescribiría
+        # el equipo actual de media liga con el de hace cuatro años.
+        ultima = conn.execute(
+            sql_text("SELECT MAX(season_id) FROM team_season_rosters")
+        ).scalar()
+        if season != ultima:
+            logger.info(
+                "Equipo actual: %s no es la temporada vigente (%s), no se deriva",
+                season, ultima,
+            )
+            return
+
+        en_plantilla = conn.execute(
+            sql_text("""
+                UPDATE players p
+                SET current_team_id = r.team_id,
+                    roster_status   = 'Active'
+                FROM team_season_rosters r
+                WHERE r.player_id = p.player_id
+                  AND r.season_id = :season
+                  AND (p.current_team_id IS DISTINCT FROM r.team_id
+                       OR p.roster_status IS DISTINCT FROM 'Active')
+            """),
+            {"season": season},
+        ).rowcount
+
+        sin_equipo = 0
+        if exhaustivo:
+            sin_equipo = conn.execute(
+                sql_text("""
+                    UPDATE players p
+                    SET current_team_id = NULL,
+                        roster_status   = 'Inactive'
+                    WHERE NOT EXISTS (
+                            SELECT 1 FROM team_season_rosters r
+                            WHERE r.player_id = p.player_id
+                              AND r.season_id = :season)
+                      AND (p.current_team_id IS NOT NULL
+                           OR p.roster_status IS DISTINCT FROM 'Inactive')
+                """),
+                {"season": season},
+            ).rowcount
+
+    if en_plantilla or sin_equipo:
+        logger.info(
+            "Equipo actual desde la plantilla %s: %d fichados, %d sin equipo",
+            season, en_plantilla, sin_equipo,
+        )
+    if not exhaustivo:
+        logger.warning(
+            "No contestaron los 30 equipos: nadie se marca como sin equipo"
+        )
 
 
 def _cuantos_no_existian(session, ids: set[int]) -> int:  # noqa: ANN001
@@ -346,5 +505,6 @@ def ingest_all_team_data(seasons: list[str]) -> dict[str, int]:
         "equipos": detalles,
         "plantillas": plantillas["filas"],
         "jugadores_nuevos": plantillas["jugadores_nuevos"],
+        "fichas_retiradas": plantillas["retiradas"],
         "clasificacion": clasificacion,
     }

@@ -26,7 +26,7 @@ from sqlalchemy import func, select
 import nbastats.db.models as m
 from nbastats.config import get_settings
 from nbastats.db.session import session_scope
-from nbastats.ingest.transforms import season_id_from_start_year
+from nbastats.ingest.transforms import season_id_from_start_year, season_start_year
 
 app = typer.Typer(add_completion=False, help="Estadísticas NBA: ingesta y mantenimiento.")
 console = Console()
@@ -48,6 +48,41 @@ def temporada_actual(hoy: dt.date | None = None) -> str:
     hoy = hoy or dt.date.today()
     inicio = hoy.year if hoy.month >= _MES_INICIO_TEMPORADA else hoy.year - 1
     return season_id_from_start_year(inicio)
+
+
+def temporada_siguiente(season: str) -> str:
+    """'2025-26' -> '2026-27'."""
+    return season_id_from_start_year(season_start_year(season) + 1)
+
+
+def temporadas_sin_partidos(season: str, publicadas: set[str]) -> list[str]:
+    """De qué temporadas se piden plantillas y calendario.
+
+    NO ES EL MISMO CORTE QUE EL DE LOS BOX SCORES, y confundirlos deja el
+    proyecto tres meses desactualizado. `temporada_actual()` cambia el 1 de
+    octubre, que es lo correcto para los partidos: antes del primero no hay
+    nada que pedir. Pero las plantillas y el calendario existen mucho antes —
+    los fichajes se firman en julio y la NBA publica el calendario en agosto—,
+    así que entre julio y septiembre ese corte apunta a una temporada ya
+    terminada e ignora aquella en la que está pasando todo.
+
+    El criterio para incluir la siguiente es el dato y no una fecha escrita a
+    mano: se incluye si la NBA ya publicó su calendario, igual que la
+    clasificación entra cuando hay un partido jugado.
+
+    Args:
+        publicadas: temporadas con calendario ya cargado.
+    """
+    siguiente = temporada_siguiente(season)
+    return [season, siguiente] if siguiente in publicadas else [season]
+
+
+def temporadas_con_calendario() -> set[str]:
+    """Temporadas que la NBA ya ha publicado, según lo que hay cargado."""
+    from nbastats.db.models import ScheduledGame
+
+    with session_scope() as s:
+        return set(s.scalars(select(ScheduledGame.season_id).distinct()).all())
 
 
 @app.command()
@@ -455,6 +490,16 @@ def daily(verbose: bool = False) -> None:
     faltan**: unos 8-13 partidos en una noche de competición, no los 6.602. Es
     lo que mantiene el coste diario en minutos aunque la carga histórica llevara
     hora y media.
+
+    NO TODO SIGUE EL MISMO CORTE DE TEMPORADA. Los partidos y lo que se deriva
+    de ellos van con `temporada_actual()`, que cambia el 1 de octubre. Las
+    plantillas y el calendario no: existen desde julio y agosto, así que entre
+    medias ese corte apuntaría a una temporada terminada mientras los fichajes
+    se firman en la siguiente. Ver `temporadas_sin_partidos()`.
+
+    Y ES LA PASADA QUE MANTIENE LAS PLANTILLAS AL DÍA, no solo la que las
+    engorda: un traspaso retira la ficha del equipo que deja, y de ahí sale
+    también en qué equipo está cada jugador, sin pedir una sola ficha más.
     """
     _configurar_logging(verbose)
     from nbastats.db.maintenance import compute_derived_columns, refresh_views
@@ -478,10 +523,19 @@ def daily(verbose: bool = False) -> None:
     enriquecido = enrich_games(only_missing=True)
     console.print(f"  {enriquecido['partidos']:,} partidos enriquecidos")
 
-    # Una petición: recoge los aplazamientos y, en diciembre, los cruces de la
-    # NBA Cup, que se publican con los dos equipos por determinar.
-    calendario = ingest_schedule([season])
+    # Se pide también el de la temporada siguiente: se publica en agosto, y si
+    # todavía no está la ingesta lo dice y sigue. Dos peticiones en total, que
+    # además recogen los aplazamientos y, en diciembre, los cruces de la NBA
+    # Cup, que se publican con los dos equipos por determinar.
+    calendario = ingest_schedule([season, temporada_siguiente(season)])
     console.print(f"  {calendario['partidos']:,} partidos en el calendario")
+
+    # PLANTILLAS Y CALENDARIO NO SIGUEN EL CORTE DE OCTUBRE. Ese corte es el
+    # bueno para los partidos y el malo para todo lo demás: entre julio y
+    # septiembre apunta a una temporada terminada mientras los fichajes se
+    # firman en la siguiente.
+    con_calendario = temporadas_con_calendario()
+    temporadas = temporadas_sin_partidos(season, con_calendario)
 
     # LAS PLANTILLAS VAN ANTES QUE LAS BIOGRAFÍAS, y el orden no es cosmético.
     # Una plantilla siembra al jugador que todavía no ha jugado —el fichaje
@@ -489,10 +543,17 @@ def daily(verbose: bool = False) -> None:
     # ficha de los que ya están en la base. Con el orden al revés, cada fichaje
     # nuevo se quedaba sin fecha de nacimiento, altura ni posición hasta la
     # pasada del día siguiente.
-    equipos = ingest_all_team_data([season])
+    equipos = ingest_all_team_data(temporadas)
     console.print(
-        f"  {equipos['equipos']} fichas de equipo, {equipos['plantillas']} de plantilla"
+        f"  {equipos['equipos']} fichas de equipo, {equipos['plantillas']} de "
+        f"plantilla en {', '.join(temporadas)}"
     )
+    n = equipos["fichas_retiradas"]
+    if n:
+        console.print(
+            f"  {n} ficha{'s' if n != 1 else ''} retirada{'s' if n != 1 else ''}: "
+            f"ya no están en el equipo"
+        )
 
     bios = ingest_player_bios(only_missing=True)
     console.print(f"  {bios['actualizados']:,} biografías nuevas")
